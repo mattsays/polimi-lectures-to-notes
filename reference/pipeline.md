@@ -225,6 +225,28 @@ the user creates it at console.groq.com/keys and writes it in their own terminal
 secret never enters a transcript, a log or a commit. If a key does get pasted into a
 chat, the only right answer is to rotate it.
 
+### Providers
+
+Two backends behind one interface, chosen with `--provider`:
+
+| | `groq` (default) | `cloudflare` |
+|---|---|---|
+| Endpoint | `POST {base}/audio/transcriptions`, multipart | `POST {base}/accounts/{id}/ai/run/@cf/openai/whisper-large-v3-turbo` |
+| Body | multipart form | JSON with base64 audio |
+| Response | bare transcript object | `{result, success, errors}` envelope |
+| Glossary | `prompt` | `initial_prompt` |
+
+Cloudflare sends audio as base64 inside JSON, not as a raw body, because a raw body has
+nowhere to put `language` and `initial_prompt` — without them the model guesses the
+language and loses the glossary. The cost is 33% more bytes on the wire: a 12 MB chunk
+becomes about 16 MB, still far under the 100 MB request limit.
+
+It also exposes knobs Groq does not, and the default is set deliberately:
+`condition_on_previous_text: false` fights the repetition loops measured on real audio.
+`vad_filter`, `no_speech_threshold`, `compression_ratio_threshold` and
+`hallucination_silence_threshold` remain available but off — they can drop audio, and
+the timestamps have to stay aligned to the slides.
+
 ### Running it
 
 ```sh

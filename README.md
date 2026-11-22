@@ -138,41 +138,79 @@ If the agent reads the file and still drifts — asks for an API key, skips the 
 starts writing before calibrating — that is an agent or harness problem. Fix it there,
 not by inflating the prompt.
 
-## Groq key
+## Providers and credentials
+
+Two transcription backends, selected with `--provider` (default `groq`):
+
+| | Groq | Cloudflare Workers AI |
+|---|---|---|
+| Model | `whisper-large-v3-turbo` | `@cf/openai/whisper-large-v3-turbo` |
+| Price per audio hour | $0.04 | $0.031 |
+| Free allowance | 7200 audio-seconds per window | 10,000 neurons/day ≈ 3.5 h of audio |
+| Beyond the allowance | pay per second | needs the Workers Paid plan |
+| Glossary prompt | yes | yes |
+| `condition_on_previous_text` | not exposed | exposed, set to `false` |
+| API shape | OpenAI-compatible multipart | one endpoint per model, JSON + base64 |
+
+Both credentials live outside any repo, so they cannot be committed or copied into a
+course folder.
+
+### Groq
 
 Resolved from `--key-file`, then `$GROQ_API_KEY`, then `$GROQ_API_KEY_FILE`, then
-`~/.config/polimi-lectures/groq.key`. It is deliberately outside any repo so it cannot be
-committed or copied into a course folder.
+`~/.config/polimi-lectures/groq.key`. Create a key at console.groq.com/keys.
 
-Check the whole setup at any time, without transcribing anything:
+### Cloudflare
+
+1. Sign up at <https://dash.cloudflare.com/sign-up/workers-and-pages>.
+2. Go to **Workers AI** → **Use REST API**.
+3. Copy the **Account ID**.
+4. **Create a Workers AI API Token** and copy it.
+5. Store both in your own terminal:
 
 ```sh
-node scripts/transcribe.mjs --check
+mkdir -p ~/.config/polimi-lectures
+printf '%s' '<api-token>'    > ~/.config/polimi-lectures/cloudflare.key
+printf '%s' '<account-id>'   > ~/.config/polimi-lectures/cloudflare.account
+chmod 600 ~/.config/polimi-lectures/cloudflare.key
 ```
 
-It reports node, ffmpeg, ffprobe, where the key was found, whether its permissions are too
-open, and whether Groq accepts it; on failure it prints the setup steps. The key is
-**never requested in the conversation**: it is created at console.groq.com/keys and
-written by the user in their own terminal, so it never enters a chat, a log or a commit.
+Resolved from `--key-file` / `--account-id`, then `$CLOUDFLARE_API_TOKEN` and
+`$CLOUDFLARE_ACCOUNT_ID`, then those two files.
+
+### Verifying
+
+```sh
+node scripts/transcribe.mjs --check --provider cloudflare
+```
+
+It reports node, ffmpeg, ffprobe, where the credentials were found, whether their
+permissions are too open, and whether the account accepts them. On failure it prints the
+setup steps.
+
+Credentials are **never requested in the conversation**: they are created in the
+provider's dashboard and written by the user in their own terminal, so they never enter a
+chat, a log or a commit. If one does get pasted into a chat, rotate it.
 
 ## Quotas, measured
 
-Groq does not expose your plan in a readable place, but it reports the real quotas on every
-response. Measured on this account with a one-request probe:
+Groq reports the real quotas on every response; Cloudflare does not, so its allowance has
+to be tracked from the dashboard.
 
-| Header | Value |
-|---|---|
-| `x-ratelimit-limit-audio-seconds` | 7200 |
-| `x-ratelimit-limit-requests` | 2000 |
-| per-request file ceiling | 25 MB (free) / 100 MB (developer) |
+| | Groq | Cloudflare |
+|---|---|---|
+| Bucket | 7200 audio-seconds | 10,000 neurons/day |
+| Requests | 2000 per window | not published |
+| File ceiling | 25 MB free / 100 MB dev | 100 MB per request |
 
-Consequence for planning: a 90-minute lecture is 5400 audio seconds, so it consumes most
-of a 7200-second bucket. Expect roughly **one lecture per refill**, not a whole course in
-one sitting. The script prints the used/left balance and the reset time after every run —
-plan with that number, not with an assumption about the window length.
+A 90-minute lecture is 5400 audio seconds, so it consumes most of a Groq bucket: expect
+roughly **one lecture per refill**. On Cloudflare the same lecture is about 3600 neurons,
+so the free daily allowance covers roughly **2.5 lectures a day**. The script prints
+Groq's used/left balance after every run — plan with that number, not with an assumption
+about the window length.
 
-`--max-upload-mb` defaults to 25, which is safe on both tiers; raise it to 100 only on the
-developer plan.
+`--max-upload-mb` defaults to 25, which is safe on every plan and well below Cloudflare's
+100 MB request limit. Base64 encoding inflates a 12 MB chunk to about 16 MB on the wire.
 
 ## Sizes, measured
 

@@ -15,11 +15,13 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 
 const DEFAULTS = {
-  model: 'whisper-large-v3-turbo',
+  provider: 'groq',         // groq | cloudflare
+  model: null,              // resolved per provider when not given
+
   language: 'it',
   chunk: 600,               // seconds per chunk; 10 min of speech FLAC is ~12 MB
   maxUploadMb: 25,          // Groq's free-tier ceiling; raise to 100 only on the dev tier
-  baseUrl: 'https://api.groq.com/openai/v1',
+  baseUrl: null,            // resolved per provider; a global default here would override it
   concurrency: 1,
   retries: 4,
   prompt: '',
@@ -28,6 +30,11 @@ const DEFAULTS = {
 };
 
 const SAMPLE_RATE = 16000;
+
+const CF_KEY_FILE = path.join(homedir(), '.config', 'polimi-lectures', 'cloudflare.key');
+const CF_ACCOUNT_FILE = path.join(homedir(), '.config', 'polimi-lectures', 'cloudflare.account');
+const CF_BASE_URL = 'https://api.cloudflare.com/client/v4';
+const CF_MODEL = '@cf/openai/whisper-large-v3-turbo';
 const DEFAULT_KEY_FILE = path.join(homedir(), '.config', 'polimi-lectures', 'groq.key');
 
 function usage(code = 0) {
@@ -35,21 +42,27 @@ function usage(code = 0) {
 usage: node scripts/transcribe.mjs <input media> --out <basename> [options]
 
   --out <path>         output basename, e.g. work/L01 (writes .transcript.md, .srt, .segments.json)
-  --model <id>         default whisper-large-v3-turbo
+  --provider <name>    groq (default) or cloudflare
+  --model <id>         default per provider: whisper-large-v3-turbo | @cf/openai/whisper-large-v3-turbo
   --language <code>    default it
   --prompt <text>      glossary prompt passed to the model
   --prompt-file <f>    read the prompt from a file (takes precedence over --prompt)
   --chunk <seconds>    chunk length, default 600
   --max-upload-mb <n>  hard ceiling per chunk, default 25; use 100 on the dev tier
   --no-snap            cut at the nominal boundary instead of inside the nearest silence
-  --key-file <f>       Groq API key file, default ${DEFAULT_KEY_FILE}
-  --base-url <url>     API base, default https://api.groq.com/openai/v1
+  --key-file <f>       API key file, default ${DEFAULT_KEY_FILE}
+  --account-id <id>    Cloudflare account id (or $CLOUDFLARE_ACCOUNT_ID)
+  --base-url <url>     API base, default per provider
   --dry-run            run ffmpeg and chunking, print the requests, call nothing
   --check              preflight only: ffmpeg, ffprobe, node, API key, and whether the API accepts it
   --help               this text
 
-api key resolution, first match wins:
+credentials, first match wins (provider groq):
   --key-file  >  $GROQ_API_KEY  >  $GROQ_API_KEY_FILE  >  ${DEFAULT_KEY_FILE}
+
+credentials, first match wins (provider cloudflare):
+  --key-file  >  $CLOUDFLARE_API_TOKEN  >  ${CF_KEY_FILE}
+  account id  --account-id  >  $CLOUDFLARE_ACCOUNT_ID  >  ${CF_ACCOUNT_FILE}
 `.trim();
   console.log(text);
   process.exit(code);
@@ -66,7 +79,9 @@ function parseArgs(argv) {
     };
     switch (a) {
       case '--out': opts.out = next(); break;
+      case '--provider': opts.provider = next(); break;
       case '--model': opts.model = next(); break;
+      case '--account-id': opts.accountId = next(); break;
       case '--language': opts.language = next(); break;
       case '--prompt': opts.prompt = next(); break;
       case '--prompt-file': opts.promptFile = next(); break;
@@ -91,6 +106,9 @@ function parseArgs(argv) {
   }
   if (!(opts.chunk > 0)) throw new Error('--chunk must be positive');
   if (!(opts.maxUploadMb > 0)) throw new Error('--max-upload-mb must be positive');
+  if (!['groq', 'cloudflare'].includes(opts.provider)) {
+    throw new Error(`unknown provider ${opts.provider}; expected groq or cloudflare`);
+  }
   return opts;
 }
 
@@ -275,7 +293,28 @@ function readLimits(res) {
   };
 }
 
-async function transcribeChunk(file, opts, apiKey) {
+function resolveTarget(opts) {
+  if (opts.provider === 'cloudflare') {
+    const token = (opts.keyFile ? readKeyFile(opts.keyFile) : (process.env.CLOUDFLARE_API_TOKEN || readKeyFile(CF_KEY_FILE))).trim();
+    const accountId = String(opts.accountId || process.env.CLOUDFLARE_ACCOUNT_ID || readKeyFile(CF_ACCOUNT_FILE)).trim();
+    const model = opts.model || CF_MODEL;
+    const baseUrl = opts.baseUrl || CF_BASE_URL;
+    return {
+      provider: 'cloudflare',
+      key: token,
+      accountId,
+      model,
+      baseUrl,
+      endpoint: `${baseUrl}/accounts/${accountId}/ai/run/${model}`,
+    };
+  }
+  const { key } = locateApiKey(opts);
+  const model = opts.model || 'whisper-large-v3-turbo';
+  const baseUrl = opts.baseUrl || 'https://api.groq.com/openai/v1';
+  return { provider: 'groq', key, model, baseUrl, endpoint: `${baseUrl}/audio/transcriptions` };
+}
+
+function assertUploadSize(file, opts) {
   const bytes = readFileSync(file);
   const limit = opts.maxUploadMb * 1_000_000;
   if (bytes.length > limit) {
@@ -284,37 +323,14 @@ async function transcribeChunk(file, opts, apiKey) {
       { fatal: true },
     );
   }
-  const form = new FormData();
-  form.append('file', new Blob([bytes]), path.basename(file));
-  form.append('model', opts.model);
-  form.append('language', opts.language);
-  form.append('response_format', 'verbose_json');
-  form.append('temperature', '0');
-  form.append('timestamp_granularities[]', 'segment');
-  if (opts.prompt) form.append('prompt', opts.prompt.slice(0, 1000));
+  return bytes;
+}
 
+async function withRetry(opts, fn) {
   let lastError;
   for (let attempt = 0; attempt <= opts.retries; attempt++) {
     try {
-      const res = await fetch(`${opts.baseUrl}/audio/transcriptions`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${apiKey}` },
-        body: form,
-        signal: AbortSignal.timeout(300_000),
-      });
-      if (!res.ok) {
-        const body = (await res.text()).slice(0, 500);
-        const retriable = res.status === 429 || res.status >= 500;
-        if (!retriable) throw Object.assign(new Error(`Groq ${res.status}: ${body}`), { fatal: true });
-        // Exhausted quota is not a transient error: waiting a few seconds will
-        // not help, and retrying pointlessly burns the remaining budget.
-        const wait = Number(res.headers.get('retry-after'));
-        if (res.status === 429 && Number.isFinite(wait) && wait > 0) {
-          throw Object.assign(new Error(`Groq 429: wait ${wait}s — ${body}`), { retryAfter: wait });
-        }
-        throw new Error(`Groq ${res.status}: ${body}`);
-      }
-      return { data: await res.json(), limits: readLimits(res) };
+      return await fn();
     } catch (err) {
       lastError = err;
       if (err.fatal) throw err;
@@ -324,6 +340,113 @@ async function transcribeChunk(file, opts, apiKey) {
     }
   }
   throw lastError;
+}
+
+async function transcribeGroqChunk(file, opts, target) {
+  const bytes = assertUploadSize(file, opts);
+  const form = new FormData();
+  form.append('file', new Blob([bytes]), path.basename(file));
+  form.append('model', target.model);
+  form.append('language', opts.language);
+  form.append('response_format', 'verbose_json');
+  form.append('temperature', '0');
+  form.append('timestamp_granularities[]', 'segment');
+  if (opts.prompt) form.append('prompt', opts.prompt.slice(0, 1000));
+
+  return withRetry(opts, async () => {
+    const res = await fetch(target.endpoint, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${target.key}` },
+      body: form,
+      signal: AbortSignal.timeout(300_000),
+    });
+    if (!res.ok) {
+      const body = (await res.text()).slice(0, 500);
+      const retriable = res.status === 429 || res.status >= 500;
+      if (!retriable) throw Object.assign(new Error(`Groq ${res.status}: ${body}`), { fatal: true });
+      // Exhausted quota is not transient: retrying pointlessly burns the budget.
+      const wait = Number(res.headers.get('retry-after'));
+      if (res.status === 429 && Number.isFinite(wait) && wait > 0) {
+        throw Object.assign(new Error(`Groq 429: wait ${wait}s — ${body}`), { retryAfter: wait });
+      }
+      throw new Error(`Groq ${res.status}: ${body}`);
+    }
+    return { data: await res.json(), limits: readLimits(res) };
+  });
+}
+
+// WebVTT fallback: Cloudflare returns segments and vtt, but never bet on one field.
+function parseVtt(vtt) {
+  const toSeconds = (stamp) => {
+    const [h, m, rest] = stamp.replace(',', '.').split(':');
+    return Number(h) * 3600 + Number(m) * 60 + Number(rest);
+  };
+  const out = [];
+  for (const block of vtt.replace(/\r/g, '').split('\n\n')) {
+    const cue = block.match(/(\d{2}:\d{2}:\d{2}[.,]\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2}[.,]\d{3})/);
+    if (!cue) continue;
+    const text = block
+      .split('\n')
+      .filter((line) => !line.includes('-->') && !/^WEBVTT/.test(line) && !/^\d+$/.test(line.trim()))
+      .join(' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (!text) continue;
+    out.push({ start: toSeconds(cue[1]), end: toSeconds(cue[2]), text });
+  }
+  return out;
+}
+
+// Cloudflare Workers AI is not OpenAI-compatible: one endpoint per model, and a
+// {result, success, errors} envelope instead of a bare transcript.
+//
+// Audio goes base64 inside JSON rather than as a raw body, because a raw body
+// leaves nowhere to put `language` or `initial_prompt`, and both matter here:
+// without them the model guesses the language and loses the course glossary.
+async function transcribeCloudflareChunk(file, opts, target) {
+  const bytes = assertUploadSize(file, opts);
+  const body = {
+    audio: bytes.toString('base64'),
+    task: 'transcribe',
+    language: opts.language,
+    // Whisper loops on repeated audio; Cloudflare exposes the knob Groq does not.
+    condition_on_previous_text: false,
+  };
+  if (opts.prompt) body.initial_prompt = opts.prompt.slice(0, 1000);
+
+  return withRetry(opts, async () => {
+    const res = await fetch(target.endpoint, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${target.key}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(300_000),
+    });
+    const raw = await res.text();
+    let payload = null;
+    try { payload = JSON.parse(raw); } catch { /* report the raw body below */ }
+
+    if (!res.ok || !payload || payload.success === false) {
+      const detail = payload ? JSON.stringify(payload.errors || payload).slice(0, 400) : raw.slice(0, 400);
+      const retriable = res.status === 429 || res.status >= 500;
+      if (!retriable) throw Object.assign(new Error(`${target.provider} ${res.status}: ${detail}`), { fatal: true });
+      throw new Error(`${target.provider} ${res.status}: ${detail}`);
+    }
+
+    const result = payload.result || {};
+    const segments = Array.isArray(result.segments) && result.segments.length
+      ? result.segments
+      : parseVtt(typeof result.vtt === 'string' ? result.vtt : '');
+    return { data: { segments, text: result.text || '' }, limits: null };
+  });
+}
+
+async function transcribeChunk(file, opts, target) {
+  return target.provider === 'cloudflare'
+    ? transcribeCloudflareChunk(file, opts, target)
+    : transcribeGroqChunk(file, opts, target);
 }
 
 function formatTimestamp(seconds, separator = ':') {
@@ -377,29 +500,47 @@ async function preflight(opts) {
     else rows.push([bin, 'ok', (r.stdout || '').split('\n')[0].trim().slice(0, 58)]);
   }
 
-  const { key, source } = locateApiKey(opts);
-  if (!key) {
-    rows.push(['groq key', 'MISSING', `nothing at ${source}`]);
-  } else if (!key.startsWith('gsk_')) {
-    rows.push(['groq key', 'SUSPICIOUS', `${source} does not start with gsk_`]);
-  } else {
-    let note = source;
-    if (source.startsWith('/') && existsSync(source)) {
-      const mode = statSync(source).mode & 0o777;
-      if (mode & 0o077) note += ` (mode ${mode.toString(8)}: readable by other users, chmod 600)`;
+  const target = resolveTarget(opts);
+  rows.push(['provider', 'ok', target.provider]);
+
+  let credentialsOk = false;
+  if (target.provider === 'cloudflare') {
+    if (!target.key) rows.push(['cf token', 'MISSING', `nothing at ${CF_KEY_FILE} or $CLOUDFLARE_API_TOKEN`]);
+    else if (!target.accountId) rows.push(['cf account', 'MISSING', `nothing at ${CF_ACCOUNT_FILE} or $CLOUDFLARE_ACCOUNT_ID`]);
+    else {
+      credentialsOk = true;
+      rows.push(['cf token', 'present', `${target.key.slice(0, 8)}… (${target.key.length} chars)`]);
+      rows.push(['cf account', 'present', target.accountId]);
     }
-    rows.push(['groq key', 'present', note]);
+  } else {
+    const { key, source } = locateApiKey(opts);
+    if (!key) {
+      rows.push(['groq key', 'MISSING', `nothing at ${source}`]);
+    } else if (!key.startsWith('gsk_')) {
+      rows.push(['groq key', 'SUSPICIOUS', `${source} does not start with gsk_`]);
+    } else {
+      credentialsOk = true;
+      let note = source;
+      if (source.startsWith('/') && existsSync(source)) {
+        const mode = statSync(source).mode & 0o777;
+        if (mode & 0o077) note += ` (mode ${mode.toString(8)}: readable by other users, chmod 600)`;
+      }
+      rows.push(['groq key', 'present', note]);
+    }
   }
 
-  if (key && key.startsWith('gsk_')) {
+  if (credentialsOk) {
+    const probe = target.provider === 'cloudflare'
+      ? `${target.baseUrl}/accounts/${target.accountId}`
+      : `${target.baseUrl}/models`;
     try {
-      const res = await fetch(`${opts.baseUrl}/models`, {
-        headers: { Authorization: `Bearer ${key}` },
+      const res = await fetch(probe, {
+        headers: { Authorization: `Bearer ${target.key}` },
         signal: AbortSignal.timeout(10_000),
       });
-      rows.push(['groq api', res.ok ? 'ok' : `HTTP ${res.status}`, res.ok ? 'key accepted' : 'key rejected']);
+      rows.push([`${target.provider} api`, res.ok ? 'ok' : `HTTP ${res.status}`, res.ok ? 'credentials accepted' : 'credentials rejected']);
     } catch (err) {
-      rows.push(['groq api', 'unverified', err.name === 'TimeoutError' ? 'timed out' : 'network error']);
+      rows.push([`${target.provider} api`, 'unverified', err.name === 'TimeoutError' ? 'timed out' : 'network error']);
     }
   }
 
@@ -412,7 +553,17 @@ async function preflight(opts) {
   const failed = rows.some((r) =>
     r[1] === 'MISSING' || r[1] === 'TOO OLD' || r[1] === 'SUSPICIOUS' || r[1] === 'HTTP 401' || r[1] === 'HTTP 403');
   if (failed) {
-    console.log(`
+    console.log(target.provider === 'cloudflare' ? `
+Fix the Cloudflare credentials yourself, in your own terminal, so they never pass through a chat:
+
+  1. dash.cloudflare.com -> Workers AI -> "Use REST API"
+  2. create a Workers AI API token, copy it
+  3. mkdir -p ~/.config/polimi-lectures
+  4. printf '%s' 'your-token' > ~/.config/polimi-lectures/cloudflare.key
+  5. printf '%s' 'your-account-id' > ~/.config/polimi-lectures/cloudflare.account
+  6. chmod 600 ~/.config/polimi-lectures/cloudflare.key
+  7. re-run: node scripts/transcribe.mjs --check --provider cloudflare
+` : `
 Fix the groq key yourself, in your own terminal, so it never passes through a chat:
 
   1. create one at https://console.groq.com/keys
@@ -445,9 +596,16 @@ async function main() {
     opts.prompt = readFileSync(opts.promptFile, 'utf8').replace(/\s+/g, ' ').trim();
   }
 
-  const apiKey = opts.dryRun ? '' : resolveApiKey(opts);
-  if (!opts.dryRun && !apiKey) {
-    throw new Error(`no Groq API key: pass --key-file, set GROQ_API_KEY, or write it to ${DEFAULT_KEY_FILE}`);
+  const target = resolveTarget(opts);
+  if (!opts.dryRun) {
+    if (!target.key) {
+      throw new Error(opts.provider === 'cloudflare'
+        ? `no Cloudflare API token: pass --key-file, set $CLOUDFLARE_API_TOKEN, or write it to ${CF_KEY_FILE}`
+        : `no Groq API key: pass --key-file, set GROQ_API_KEY, or write it to ${DEFAULT_KEY_FILE}`);
+    }
+    if (opts.provider === 'cloudflare' && !target.accountId) {
+      throw new Error(`no Cloudflare account id: pass --account-id, set $CLOUDFLARE_ACCOUNT_ID, or write it to ${CF_ACCOUNT_FILE}`);
+    }
   }
 
   const outDir = path.dirname(opts.out);
@@ -476,7 +634,7 @@ async function main() {
 
     console.log(`${label}  transcribing...`);
     try {
-      const { data: result, limits } = await transcribeChunk(file, opts, apiKey);
+      const { data: result, limits } = await transcribeChunk(file, opts, target);
       lastLimits = limits;
       const raw = Array.isArray(result.segments) && result.segments.length
         ? result.segments
@@ -503,7 +661,7 @@ async function main() {
   const header = [
     '---',
     `source: ${opts.input}`,
-    `engine: groq/${opts.model}`,
+    `engine: ${target.provider}/${target.model}`,
     `language: ${opts.language}`,
     `audio: ${SAMPLE_RATE} Hz mono FLAC, ${opts.chunk}s chunks`,
     `duration: ${formatTimestamp(totalDuration)}`,

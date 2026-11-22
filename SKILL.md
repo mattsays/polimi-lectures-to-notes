@@ -155,7 +155,9 @@ console.groq.com/keys, then in their terminal
 `~/.config/polimi-lectures/groq.key`, `chmod 600` it, and re-run `--check`.
 
 It normalises to 16 kHz mono FLAC, cuts inside silences where possible, keeps every
-upload below the limit, timestamps every segment and merges. Keep `work/glossary.txt`
+upload below the limit, timestamps every segment and merges. Add `--provider cloudflare`
+to use Workers AI instead of Groq; credentials and the preflight differ per provider, and
+the script says which file to write. Keep `work/glossary.txt`
 current: the glossary prompt is the cheapest accuracy win available. Then extract slide
 text and build the slide ↔ time map as described in `reference/pipeline.md` §5–6.
 
