@@ -15,7 +15,7 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 
 const DEFAULTS = {
-  provider: 'groq',         // groq | cloudflare
+  provider: null,           // resolved: --provider > $LECTURE_STT_PROVIDER > provider file > groq
   model: null,              // resolved per provider when not given
 
   language: 'it',
@@ -31,6 +31,7 @@ const DEFAULTS = {
 
 const SAMPLE_RATE = 16000;
 
+const PROVIDER_FILE = path.join(homedir(), '.config', 'polimi-lectures', 'provider');
 const CF_KEY_FILE = path.join(homedir(), '.config', 'polimi-lectures', 'cloudflare.key');
 const CF_ACCOUNT_FILE = path.join(homedir(), '.config', 'polimi-lectures', 'cloudflare.account');
 const CF_BASE_URL = 'https://api.cloudflare.com/client/v4';
@@ -106,6 +107,9 @@ function parseArgs(argv) {
   }
   if (!(opts.chunk > 0)) throw new Error('--chunk must be positive');
   if (!(opts.maxUploadMb > 0)) throw new Error('--max-upload-mb must be positive');
+  if (!opts.provider) {
+    opts.provider = (process.env.LECTURE_STT_PROVIDER || (existsSync(PROVIDER_FILE) ? readFileSync(PROVIDER_FILE, 'utf8') : '') || 'groq').trim();
+  }
   if (!['groq', 'cloudflare'].includes(opts.provider)) {
     throw new Error(`unknown provider ${opts.provider}; expected groq or cloudflare`);
   }

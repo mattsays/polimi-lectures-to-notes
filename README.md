@@ -211,6 +211,14 @@ chmod 600 ~/.config/polimi-lectures/cloudflare.key
 Resolved from `--key-file` / `--account-id`, then `$CLOUDFLARE_API_TOKEN` and
 `$CLOUDFLARE_ACCOUNT_ID`, then those two files.
 
+To stop passing `--provider cloudflare` on every run, make it the default once:
+
+```sh
+printf '%s' 'cloudflare' > ~/.config/polimi-lectures/provider
+```
+
+Precedence: `--provider` flag, then `$LECTURE_STT_PROVIDER`, then that file, then `groq`.
+
 ### Verifying
 
 ```sh
