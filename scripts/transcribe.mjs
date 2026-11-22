@@ -513,7 +513,7 @@ async function preflight(opts) {
     else if (!target.accountId) rows.push(['cf account', 'MISSING', `nothing at ${CF_ACCOUNT_FILE} or $CLOUDFLARE_ACCOUNT_ID`]);
     else {
       credentialsOk = true;
-      rows.push(['cf token', 'present', `${target.key.slice(0, 8)}… (${target.key.length} chars)`]);
+      rows.push(['cf key', 'present', `${target.key.slice(0, 8)}… (${target.key.length} chars)`]);
       rows.push(['cf account', 'present', target.accountId]);
     }
   } else {
@@ -534,17 +534,37 @@ async function preflight(opts) {
   }
 
   if (credentialsOk) {
-    const probe = target.provider === 'cloudflare'
-      ? `${target.baseUrl}/accounts/${target.accountId}`
-      : `${target.baseUrl}/models`;
-    try {
-      const res = await fetch(probe, {
-        headers: { Authorization: `Bearer ${target.key}` },
-        signal: AbortSignal.timeout(10_000),
-      });
-      rows.push([`${target.provider} api`, res.ok ? 'ok' : `HTTP ${res.status}`, res.ok ? 'credentials accepted' : 'credentials rejected']);
-    } catch (err) {
-      rows.push([`${target.provider} api`, 'unverified', err.name === 'TimeoutError' ? 'timed out' : 'network error']);
+    const auth = { Authorization: `Bearer ${target.key}` };
+
+    if (target.provider === 'cloudflare') {
+      // Two checks, because they fail for different reasons and people need to tell
+      // them apart: the token itself, then the permission this pipeline exercises.
+      // Probing /accounts/{id} would be wrong — a Workers-AI-scoped token is not
+      // allowed to read the account object, yet it transcribes perfectly.
+      try {
+        const verify = await fetch(`${target.baseUrl}/user/tokens/verify`, { headers: auth, signal: AbortSignal.timeout(10_000) });
+        const body = await verify.json().catch(() => null);
+        const active = verify.ok && body?.result?.status === 'active';
+        rows.push(['cf token', active ? 'ok' : `HTTP ${verify.status}`, active ? 'valid and active' : 'token rejected — create a new one']);
+      } catch (err) {
+        rows.push(['cf token', 'unverified', err.name === 'TimeoutError' ? 'timed out' : 'network error']);
+      }
+
+      try {
+        const probe = await fetch(`${target.baseUrl}/accounts/${target.accountId}/ai/models/search`, { headers: auth, signal: AbortSignal.timeout(10_000) });
+        rows.push(['cf access', probe.ok ? 'ok' : `HTTP ${probe.status}`, probe.ok
+          ? 'account id and Workers AI permission usable'
+          : 'check the account id, and that the token carries Workers AI Read']);
+      } catch (err) {
+        rows.push(['cf access', 'unverified', err.name === 'TimeoutError' ? 'timed out' : 'network error']);
+      }
+    } else {
+      try {
+        const res = await fetch(`${target.baseUrl}/models`, { headers: auth, signal: AbortSignal.timeout(10_000) });
+        rows.push(['groq api', res.ok ? 'ok' : `HTTP ${res.status}`, res.ok ? 'credentials accepted' : 'credentials rejected']);
+      } catch (err) {
+        rows.push(['groq api', 'unverified', err.name === 'TimeoutError' ? 'timed out' : 'network error']);
+      }
     }
   }
 
@@ -555,7 +575,7 @@ async function preflight(opts) {
   }
 
   const failed = rows.some((r) =>
-    r[1] === 'MISSING' || r[1] === 'TOO OLD' || r[1] === 'SUSPICIOUS' || r[1] === 'HTTP 401' || r[1] === 'HTTP 403');
+    r[1] === 'MISSING' || r[1] === 'TOO OLD' || r[1] === 'SUSPICIOUS' || r[1].startsWith('HTTP 4'));
   if (failed) {
     console.log(target.provider === 'cloudflare' ? `
 Fix the Cloudflare credentials yourself, in your own terminal, so they never pass through a chat:
