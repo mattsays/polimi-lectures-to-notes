@@ -9,7 +9,7 @@
 //
 // Requires: ffmpeg + ffprobe on PATH, and a Groq API key (see resolveApiKey).
 
-import { readFileSync, writeFileSync, mkdirSync, existsSync, rmSync, statSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, existsSync, rmSync, statSync, readdirSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { homedir } from 'node:os';
 import path from 'node:path';
@@ -36,6 +36,8 @@ const CF_KEY_FILE = path.join(homedir(), '.config', 'polimi-lectures', 'cloudfla
 const CF_ACCOUNT_FILE = path.join(homedir(), '.config', 'polimi-lectures', 'cloudflare.account');
 const CF_BASE_URL = 'https://api.cloudflare.com/client/v4';
 const CF_MODEL = '@cf/openai/whisper-large-v3-turbo';
+const MLX_BIN = process.env.WHISPERMLX_BIN || 'whispermlx';
+const MLX_MODEL = 'large-v3-turbo';
 const DEFAULT_KEY_FILE = path.join(homedir(), '.config', 'polimi-lectures', 'groq.key');
 
 function usage(code = 0) {
@@ -43,7 +45,7 @@ function usage(code = 0) {
 usage: node scripts/transcribe.mjs <input media> --out <basename> [options]
 
   --out <path>         output basename, e.g. work/L01 (writes .transcript.md, .srt, .segments.json)
-  --provider <name>    groq (default) or cloudflare
+  --provider <name>    groq (default), cloudflare, or whispermlx (local, Apple Silicon)
   --model <id>         default per provider: whisper-large-v3-turbo | @cf/openai/whisper-large-v3-turbo
   --language <code>    default it
   --prompt <text>      glossary prompt passed to the model
@@ -53,6 +55,9 @@ usage: node scripts/transcribe.mjs <input media> --out <basename> [options]
   --no-snap            cut at the nominal boundary instead of inside the nearest silence
   --key-file <f>       API key file, default ${DEFAULT_KEY_FILE}
   --account-id <id>    Cloudflare account id (or $CLOUDFLARE_ACCOUNT_ID)
+  --whispermlx <path>  whispermlx binary, default $WHISPERMLX_BIN or whispermlx on PATH
+  --diarize            whispermlx only: label speakers (needs --hf-token)
+  --hf-token <token>   whispermlx only: Hugging Face token for diarization
   --base-url <url>     API base, default per provider
   --dry-run            run ffmpeg and chunking, print the requests, call nothing
   --check              preflight only: ffmpeg, ffprobe, node, API key, and whether the API accepts it
@@ -83,6 +88,9 @@ function parseArgs(argv) {
       case '--provider': opts.provider = next(); break;
       case '--model': opts.model = next(); break;
       case '--account-id': opts.accountId = next(); break;
+      case '--whispermlx': opts.mlxBin = next(); break;
+      case '--hf-token': opts.hfToken = next(); break;
+      case '--diarize': opts.diarize = true; break;
       case '--language': opts.language = next(); break;
       case '--prompt': opts.prompt = next(); break;
       case '--prompt-file': opts.promptFile = next(); break;
@@ -110,8 +118,8 @@ function parseArgs(argv) {
   if (!opts.provider) {
     opts.provider = (process.env.LECTURE_STT_PROVIDER || (existsSync(PROVIDER_FILE) ? readFileSync(PROVIDER_FILE, 'utf8') : '') || 'groq').trim();
   }
-  if (!['groq', 'cloudflare'].includes(opts.provider)) {
-    throw new Error(`unknown provider ${opts.provider}; expected groq or cloudflare`);
+  if (!['groq', 'cloudflare', 'whispermlx'].includes(opts.provider)) {
+    throw new Error(`unknown provider ${opts.provider}; expected groq, cloudflare or whispermlx`);
   }
   return opts;
 }
@@ -298,6 +306,16 @@ function readLimits(res) {
 }
 
 function resolveTarget(opts) {
+  if (opts.provider === 'whispermlx') {
+    return {
+      provider: 'whispermlx',
+      bin: opts.mlxBin || MLX_BIN,
+      model: opts.model || MLX_MODEL,
+      diarize: Boolean(opts.diarize),
+      hfToken: opts.hfToken || process.env.HF_TOKEN || '',
+      key: 'local',      // nothing to authenticate: it runs on this machine
+    };
+  }
   if (opts.provider === 'cloudflare') {
     const token = (opts.keyFile ? readKeyFile(opts.keyFile) : (process.env.CLOUDFLARE_API_TOKEN || readKeyFile(CF_KEY_FILE))).trim();
     const accountId = String(opts.accountId || process.env.CLOUDFLARE_ACCOUNT_ID || readKeyFile(CF_ACCOUNT_FILE)).trim();
@@ -447,10 +465,62 @@ async function transcribeCloudflareChunk(file, opts, target) {
   });
 }
 
+// whispermlx (a WhisperX fork on the MLX backend) is a CLI that writes files rather
+// than printing JSON, so the adapter runs it into a scratch directory and reads the
+// segment list back. No quota, no upload: the cost is wall-clock time.
+async function transcribeLocalChunk(file, opts, target) {
+  const stem = path.basename(file, path.extname(file));
+  const outDir = path.join(path.dirname(file), 'mlx-out');
+  mkdirSync(outDir, { recursive: true });
+  for (const stale of readdirSync(outDir)) rmSync(path.join(outDir, stale), { recursive: true, force: true });
+
+  const args = [
+    file,
+    '--model', target.model,
+    '--language', opts.language,
+    '--output_format', 'json',
+    '--output_dir', outDir,
+  ];
+  if (opts.prompt) args.push('--initial_prompt', opts.prompt.slice(0, 1000));
+  if (target.diarize) {
+    if (!target.hfToken) {
+      throw Object.assign(new Error('--diarize needs a Hugging Face token: pass --hf-token or set $HF_TOKEN'), { fatal: true });
+    }
+    args.push('--diarize', '--hf_token', target.hfToken);
+  }
+
+  const proc = spawnSync(target.bin, args, { encoding: 'utf8', timeout: 3_600_000 });
+  if (proc.error) {
+    throw Object.assign(
+      new Error(`${target.bin} not runnable (${proc.error.message}); install it with: pip install whispermlx`),
+      { fatal: true },
+    );
+  }
+  if (proc.status !== 0) {
+    throw Object.assign(
+      new Error(`${target.bin} exited ${proc.status}: ${(proc.stderr || '').trim().split('\n').slice(-3).join(' ').slice(0, 300)}`),
+      { fatal: true },
+    );
+  }
+
+  const produced = readdirSync(outDir).filter((f) => f.endsWith('.json'));
+  const jsonPath = produced.includes(`${stem}.json`) ? path.join(outDir, `${stem}.json`) : path.join(outDir, produced[0] || '');
+  if (!jsonPath || !existsSync(jsonPath)) {
+    throw Object.assign(new Error(`${target.bin} produced no JSON in ${outDir}`), { fatal: true });
+  }
+  const parsed = JSON.parse(readFileSync(jsonPath, 'utf8'));
+  const segments = (Array.isArray(parsed.segments) ? parsed.segments : []).map((seg) => ({
+    start: Number(seg.start) || 0,
+    end: Number(seg.end) || 0,
+    text: String(seg.text ?? ''),
+  }));
+  return { data: { segments, text: parsed.text || segments.map((x) => x.text).join(' ') }, limits: null };
+}
+
 async function transcribeChunk(file, opts, target) {
-  return target.provider === 'cloudflare'
-    ? transcribeCloudflareChunk(file, opts, target)
-    : transcribeGroqChunk(file, opts, target);
+  if (target.provider === 'cloudflare') return transcribeCloudflareChunk(file, opts, target);
+  if (target.provider === 'whispermlx') return transcribeLocalChunk(file, opts, target);
+  return transcribeGroqChunk(file, opts, target);
 }
 
 function formatTimestamp(seconds, separator = ':') {
@@ -508,7 +578,14 @@ async function preflight(opts) {
   rows.push(['provider', 'ok', target.provider]);
 
   let credentialsOk = false;
-  if (target.provider === 'cloudflare') {
+  if (target.provider === 'whispermlx') {
+    // Local provider: nothing to authenticate, the binary either runs or it does not.
+    const probe = spawnSync(target.bin, ['--help'], { encoding: 'utf8', timeout: 30_000 });
+    const ran = !probe.error && ((probe.stdout || '').length + (probe.stderr || '').length) > 0;
+    rows.push(['whispermlx', ran ? 'ok' : 'MISSING', ran
+      ? `${target.bin}, model ${target.model}${target.diarize ? ', diarization on' : ''}`
+      : `${target.bin} not runnable — pip install whispermlx`]);
+  } else if (target.provider === 'cloudflare') {
     if (!target.key) rows.push(['cf token', 'MISSING', `nothing at ${CF_KEY_FILE} or $CLOUDFLARE_API_TOKEN`]);
     else if (!target.accountId) rows.push(['cf account', 'MISSING', `nothing at ${CF_ACCOUNT_FILE} or $CLOUDFLARE_ACCOUNT_ID`]);
     else {
@@ -577,7 +654,14 @@ async function preflight(opts) {
   const failed = rows.some((r) =>
     r[1] === 'MISSING' || r[1] === 'TOO OLD' || r[1] === 'SUSPICIOUS' || r[1].startsWith('HTTP 4'));
   if (failed) {
-    console.log(target.provider === 'cloudflare' ? `
+    console.log(target.provider === 'whispermlx' ? `
+Install the local provider, in its own environment so it cannot disturb the system Python:
+
+  uv tool install whispermlx        # or: python3 -m venv ~/.venvs/mlx && ~/.venvs/mlx/bin/pip install whispermlx
+  whispermlx --help
+
+The model is downloaded from Hugging Face on first use; expect ~1 GB for large-v3-turbo.
+` : target.provider === 'cloudflare' ? `
 Fix the Cloudflare credentials yourself, in your own terminal, so they never pass through a chat:
 
   1. dash.cloudflare.com -> Workers AI -> "Use REST API"

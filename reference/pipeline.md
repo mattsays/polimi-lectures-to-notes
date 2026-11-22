@@ -276,12 +276,18 @@ chat, the only right answer is to rotate it.
 
 Two backends behind one interface, chosen with `--provider`:
 
-| | `groq` (default) | `cloudflare` |
-|---|---|---|
-| Endpoint | `POST {base}/audio/transcriptions`, multipart | `POST {base}/accounts/{id}/ai/run/@cf/openai/whisper-large-v3-turbo` |
-| Body | multipart form | JSON with base64 audio |
-| Response | bare transcript object | `{result, success, errors}` envelope |
-| Glossary | `prompt` | `initial_prompt` |
+| | `groq` (default) | `cloudflare` | `whispermlx` |
+|---|---|---|---|
+| Endpoint | `POST {base}/audio/transcriptions`, multipart | `POST {base}/accounts/{id}/ai/run/@cf/openai/whisper-large-v3-turbo` | local CLI process |
+| Body | multipart form | JSON with base64 audio | a file on disk |
+| Response | bare transcript object | `{result, success, errors}` envelope | JSON written into `--output_dir` |
+| Glossary | `prompt` | `initial_prompt` | `--initial_prompt` |
+| Quota | 7200 audio-s per window | 10,000 neurons/day | none |
+
+`whispermlx` is a WhisperX fork on MLX: it writes files instead of printing JSON, so each
+chunk gets a scratch directory, the `<stem>.json` is read back, and its segments are
+offset and merged like any other provider. It is the only option with no quota and no
+upload, at the cost of wall-clock time and a ~1 GB model download.
 
 Cloudflare sends audio as base64 inside JSON, not as a raw body, because a raw body has
 nowhere to put `language` and `initial_prompt` — without them the model guesses the

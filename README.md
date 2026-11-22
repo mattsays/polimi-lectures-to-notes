@@ -175,15 +175,15 @@ not by inflating the prompt.
 
 Two transcription backends, selected with `--provider` (default `groq`):
 
-| | Groq | Cloudflare Workers AI |
-|---|---|---|
-| Model | `whisper-large-v3-turbo` | `@cf/openai/whisper-large-v3-turbo` |
-| Price per audio hour | $0.04 | $0.031 |
-| Free allowance | 7200 audio-seconds per window | 10,000 neurons/day ≈ 3.5 h of audio |
-| Beyond the allowance | pay per second | needs the Workers Paid plan |
-| Glossary prompt | yes | yes |
-| `condition_on_previous_text` | not exposed | exposed, set to `false` |
-| API shape | OpenAI-compatible multipart | one endpoint per model, JSON + base64 |
+| | Groq | Cloudflare Workers AI | whispermlx (local) |
+|---|---|---|---|
+| Model | `whisper-large-v3-turbo` | `@cf/openai/whisper-large-v3-turbo` | `large-v3-turbo` |
+| Price per audio hour | $0.04 | $0.031 | $0 |
+| Free allowance | 7200 audio-seconds per window | 10,000 neurons/day ≈ 3.5 h of audio | unlimited |
+| Beyond the allowance | pay per second | needs the Workers Paid plan | — |
+| Glossary prompt | yes | yes | yes (`--initial_prompt`) |
+| `condition_on_previous_text` | not exposed | exposed, set to `false` | not exposed |
+| API shape | OpenAI-compatible multipart | one endpoint per model, JSON + base64 | local CLI writing JSON files |
 
 Both credentials live outside any repo, so they cannot be committed or copied into a
 course folder.
@@ -219,6 +219,39 @@ printf '%s' 'cloudflare' > ~/.config/polimi-lectures/provider
 
 Precedence: `--provider` flag, then `$LECTURE_STT_PROVIDER`, then that file, then `groq`.
 
+### whispermlx (local, Apple Silicon)
+
+A [WhisperX](https://github.com/m-bain/whisperX) fork with the inference backend swapped to
+[MLX](https://github.com/ml-explore/mlx), so it runs on the Apple Silicon GPU. Word-level
+timestamps and VAD come for free; speaker diarization is available through pyannote.
+
+The appeal is the one thing the hosted providers cannot offer: **no quota and no upload**.
+A 40-hour course costs nothing but wall-clock time, and the recordings never leave the
+machine — which for PoliMi lectures is the better default anyway.
+
+```sh
+uv tool install whispermlx
+whispermlx --help
+```
+
+Install it in its own environment, not with the system Python. The model downloads from
+Hugging Face on first use (~1 GB for `large-v3-turbo`, ~3 GB for `large-v3`).
+
+```sh
+node scripts/transcribe.mjs raw/L01.mp4 --out work/L01 --language it --provider whispermlx
+```
+
+Use `--whispermlx <path>` or `$WHISPERMLX_BIN` when the binary lives in a virtualenv, and
+`--model large-v3` when accuracy matters more than time. Diarization needs a Hugging Face
+token plus acceptance of the pyannote model terms:
+
+```sh
+node scripts/transcribe.mjs raw/L01.mp4 --out work/L01 --provider whispermlx \
+  --diarize --hf-token <token>
+```
+
+Make it the default with `printf '%s' 'whispermlx' > ~/.config/polimi-lectures/provider`.
+
 ### Verifying
 
 ```sh
@@ -240,7 +273,7 @@ to be tracked from the dashboard.
 
 | | Groq | Cloudflare |
 |---|---|---|
-| Bucket | 7200 audio-seconds | 10,000 neurons/day |
+| Bucket | 7200 audio-seconds | 10,000 neurons/day | none |
 | Requests | 2000 per window | not published |
 | File ceiling | 25 MB free / 100 MB dev | 100 MB per request |
 
