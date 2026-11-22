@@ -168,8 +168,19 @@ split and no offsets to reconstruct. An existing transcript is skipped unless `-
 passed, which makes the loop resumable. Keep `work/glossary.txt` current — the glossary
 improves technical terms more than any other single change.
 
-Then extract slide text and build the slide ↔ time map as described in
-`reference/pipeline.md` §5–6.
+The language defaults to `en` and is never auto-detected; pass `--language it` for an
+Italian course.
+
+Then extract slide text and build the slide ↔ time map:
+
+```sh
+pdftotext -layout assets/L01.pdf work/L01-slides.txt
+node scripts/align.mjs --segments work/L01.segments.json --slides work/L01-slides.txt \
+                       --out work/L01.alignment.json
+```
+
+`reference/pipeline.md` §5–6 explains the heuristics and what they cannot do; check the
+`low` confidence entries against the rendered pages.
 
 ### Phase 4 — Notes, one lesson at a time
 Now the loop that produces deliverables. For each lesson, in order:

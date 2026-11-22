@@ -22,6 +22,7 @@ fixtures, not yet on a full real course.
 | `reference/extraction.md` | Phase 4: JSON schema, exam-signal taxonomy, coverage check. |
 | `reference/templates.md` | Phase 4: Markdown skeletons and course-level files. |
 | `scripts/transcribe.mjs` | ffmpeg normalisation, whispermlx invocation, transcript and subtitle output, preflight. |
+| `scripts/align.mjs` | Maps slides to the moments they are discussed, from lexical overlap and verbal cues. |
 | `scripts/poliwebex-cookie.mjs` | Stores a Webex session cookie, for accounts that sign in with CIE instead of a password. |
 
 ## How it is designed
@@ -166,9 +167,12 @@ not by inflating the prompt.
 ## Transcription
 
 ```sh
-node scripts/transcribe.mjs raw/L01.mp4 --out work/L01 --language it \
+node scripts/transcribe.mjs raw/L01.mp4 --out work/L01 \
   --prompt-file work/glossary.txt
 ```
+
+The language is `en` by default and never auto-detected: pass `--language it` for an
+Italian course. A wrong guess is silent, while a wrong flag is obvious.
 
 One invocation per lecture. whispermlx is a [WhisperX](https://github.com/m-bain/whisperX)
 fork on [MLX](https://github.com/ml-explore/mlx): word-level timestamps and VAD come for

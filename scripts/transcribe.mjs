@@ -16,7 +16,7 @@ import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 
 const DEFAULTS = {
-  language: 'it',
+  language: 'en',
   model: 'large-v3-turbo',
   bin: process.env.WHISPERMLX_BIN || 'whispermlx',
   prompt: '',
@@ -35,7 +35,7 @@ usage: node scripts/transcribe.mjs <media> --out <basename> [options]
 
   --out <path>         output basename (writes .transcript.md, .srt, .segments.json)
   --model <name>       whispermlx model, default large-v3-turbo (use large-v3 for accuracy)
-  --language <code>    default it
+  --language <code>    default en; set it explicitly for a course taught in another language
   --prompt <text>      glossary passed as --initial_prompt, improves technical terms
   --prompt-file <f>    read the glossary from a file (wins over --prompt)
   --whispermlx <path>  binary, default $WHISPERMLX_BIN or whispermlx on PATH

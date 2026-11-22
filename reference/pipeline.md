@@ -214,7 +214,7 @@ machine.
 
 ```sh
 node scripts/transcribe.mjs raw/L01.mp4 --out work/L01 \
-  --language it --prompt-file work/glossary.txt
+  --prompt-file work/glossary.txt
 ```
 
 What it does: normalises the media to 16 kHz mono FLAC with `ffmpeg`, runs whispermlx once
@@ -253,6 +253,10 @@ nobody reads is a bad default.
 
 If a late whispermlx stage fails anyway, the script keeps the transcript and warns instead
 of discarding minutes of work: the failure is reported, the segments are usable.
+
+The language is fixed to `en` by default and never auto-detected: a wrong guess poisons a
+whole lecture, and a wrong explicit setting is one flag away from fixed. Pass
+`--language it` for an Italian course.
 
 `--initial_prompt` holds 200–500 characters of course-specific terms only: symbol names
 read aloud, acronyms, instructor names, method names. It is the cheapest accuracy win
@@ -308,21 +312,41 @@ Split the output on form feed to recover per-page text, keeping page numbers.
 
 ## 6. Slide alignment
 
-Goal: for each slide, the time interval in which the instructor is talking about it. This
-is cheap and should not need a model.
+Implemented in `scripts/align.mjs`. It answers one question per slide: *when* was it being
+discussed. The output feeding the notes is `work/L01.alignment.json`, so every extracted
+concept can cite `slide 7` and the minute it belongs to.
 
-1. Normalise slide text and transcript windows: lowercase, strip accents and punctuation,
-   drop stopwords, keep numbers and symbols.
-2. Slide every 30-second window across the slides and score token overlap (Jaccard on
-   content words); keep the best few candidates per window.
-3. Anchor on explicit cues: "next slide", "slide twelve", "this figure", "look at the
-   plot", "as you can see here". These are near-certain and cheap to detect.
-4. Between anchors, assign monotonically: people move forward. Mark backward jumps as
-   `rewind` instead of smoothing them away, because that is usually a review moment worth
-   capturing as a summary.
-5. Write `work/L01.alignment.json`:
-   `{"slide": 7, "t_start": 512, "t_end": 604, "confidence": "high|low", "anchor": "cue"}`
+```sh
+pdftotext -layout assets/L01.pdf work/L01-slides.txt
+node scripts/align.mjs --segments work/L01.segments.json \
+                      --slides work/L01-slides.txt \
+                      --out work/L01.alignment.json
+```
 
-Only `low` confidence anchors go to the model for a bounded check, with the slide text
-and two minutes of transcript around the candidate. Never send the whole transcript to
-solve alignment.
+**How it works.** No model, no tokens, one second per lecture.
+
+1. The slides file is split on form feeds, one page per slide, and each page is tokenised:
+   lowercase, accents stripped, stopwords dropped, numbers kept.
+2. Tokens that appear on most slides are discarded. If every page says "exercise", that
+   word makes every page equally similar to everything and carries no signal.
+3. Transcript segments are grouped into 30-second windows, each tokenised the same way.
+4. Every window is scored against every slide with Jaccard overlap on those token sets.
+5. Explicit cues win outright: "slide 12", "figure 3", "pagina 7", "diapositiva 5". A named
+   number is near-certain and costs a regex.
+6. Otherwise the mapping moves only when the evidence does: a better score *and* a soft cue
+   ("next slide", "this figure", "as you can see"), or an overlap more than twice the
+   current one, which means the topic plainly changed even if nobody announced it.
+7. The result is monotonic by construction — a lecturer moves forward — and a backward jump
+   is recorded with `rewind: true` instead of being smoothed away, because going back is
+   usually a recap worth capturing.
+
+**Confidence** is `high` for cue anchors, `medium` for a decisive overlap, `low` otherwise.
+Only `low` entries are worth checking, which is usually a handful per lecture.
+
+**What it does not do.** It cannot recover a slide the lecturer never discussed (listed in
+`never_discussed`), it cannot order slides inside a window shorter than 30 seconds, and two
+slides with near-identical text will be confused with each other. Those cases need the
+frames, not a better algorithm: render the contested pages with `pdftoppm` and look.
+
+The `--margin` flag tunes how eagerly it switches (default 1.35×); raise it for a lecturer
+who wanders, lower it for one who moves briskly.
