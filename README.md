@@ -23,6 +23,7 @@ Missing inputs are listed under *Next steps*.
 | `reference/extraction.md` | Phase 3: JSON schema, exam-signal taxonomy, coverage check. |
 | `reference/templates.md` | Phase 4: Markdown skeletons and course-level files. |
 | `scripts/transcribe.mjs` | ffmpeg normalisation, chunking, Groq API calls, timestamp merge, preflight. |
+| `scripts/poliwebex-cookie.mjs` | stores a Webex session cookie for PoliWebex, for accounts that sign in with CIE instead of a password. |
 
 ## How it is designed
 
@@ -243,7 +244,9 @@ any tier, and chunking also isolates retries to a single piece.
 - Scanned or handwritten slides need page rendering, not text extraction.
 - Poor audio in some recordings degrades every later phase; catch it at download time
   with `ffprobe` and a spot listen.
-- PoliWebex drives a real SPID login: it breaks when PoliMi changes the login flow.
+- PoliWebex drives a real SPID login: it breaks when PoliMi changes the login flow, and it
+  cannot handle CIE (phone) logins at all. Use `scripts/poliwebex-cookie.mjs` to inject a
+  browser session cookie instead.
   Treat a failed download as a tool problem, not something to work around.
 
 ## Credits

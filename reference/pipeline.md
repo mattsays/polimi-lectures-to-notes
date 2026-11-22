@@ -112,6 +112,34 @@ The most common failure is not the tool and not this skill: it is authentication
 | `This video does not exist` | id wrong or not shared with the account | check the recording is still online and visible to you |
 | login loop / timeout | SPID flow changed, or slow connection | retry with `-i 2`, which doubles every timeout |
 
+### Accounts that sign in with CIE
+
+PoliWebex automates a username+password form. If the account authenticates with CIE on a
+phone, there is no password to fill, so it can never get past login — whatever you type,
+it comes back asking for a password, and the browser ends up on the Webex home page
+instead of the recording.
+
+Do not fight it: skip its login entirely. PoliWebex stores the session in
+`config.json` under `cookie` and reuses it while valid, so a cookie captured from a normal
+browser session is enough.
+
+1. Log into Webex with CIE in Chrome, then open any recording page.
+2. DevTools → Network → filter `politecnicomilano.webex.com` → any request → Request
+   Headers → copy the whole `Cookie:` value.
+3. `node scripts/poliwebex-cookie.mjs`, paste it, press Ctrl-D. The helper validates it
+   against Webex and writes it into `~/tools/PoliWebex/config.json`; it is never echoed
+   back and never enters the shell history.
+4. `node poliwebex.js -v "<url>" -o "<course>/raw/_incoming"` now prints `Cookie is valid`
+   and asks for nothing.
+
+Cookies expire — typically after a few hours or a browser restart. When downloads start
+failing again, `node scripts/poliwebex-cookie.mjs --check` says so and you repeat step 2.
+Expect to redo this once per study session, not once per lecture.
+
+The `X11 is not installed` message from keytar is unrelated noise on macOS: it means the
+password cannot be stored in the keychain. With a valid cookie there is no password to
+store, and `-k` silences the warning.
+
 Two flags matter here: `-k` skips the system keyring when it refuses to store the password
 (macOS may deny access silently), and `-i 2` scales the timeout, which is the fix for a
 login that is merely slow.
