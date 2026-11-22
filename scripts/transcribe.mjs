@@ -24,6 +24,7 @@ const DEFAULTS = {
   diarize: false,
   hfToken: '',
   keepAudio: false,
+  noAlign: true,
 };
 
 const SAMPLE_RATE = 16000;
@@ -38,6 +39,9 @@ usage: node scripts/transcribe.mjs <media> --out <basename> [options]
   --prompt <text>      glossary passed as --initial_prompt, improves technical terms
   --prompt-file <f>    read the glossary from a file (wins over --prompt)
   --whispermlx <path>  binary, default $WHISPERMLX_BIN or whispermlx on PATH
+  --align              enable word-level alignment; off by default because it pulls a
+                       wav2vec2 model (~380 MB) plus NLTK punkt_tab, and segment
+                       timestamps are all the slide alignment needs
   --diarize            label speakers; needs --hf-token and pyannote model acceptance
   --hf-token <token>   Hugging Face token for diarization (or $HF_TOKEN)
   --force              re-transcribe even if the transcript already exists
@@ -71,6 +75,7 @@ function parseArgs(argv) {
       case '--whispermlx': opts.bin = next(); break;
       case '--hf-token': opts.hfToken = next(); break;
       case '--diarize': opts.diarize = true; break;
+      case '--align': opts.noAlign = false; break;
       case '--force': opts.force = true; break;
       case '--keep-audio': opts.keepAudio = true; break;
       case '--check': opts.check = true; break;
@@ -100,6 +105,29 @@ function run(cmd, args, label, timeout = 3_600_000) {
     throw Object.assign(new Error(`${label}: ${cmd} exited ${r.status}${tail ? ` — ${tail.slice(0, 400)}` : ''}`), { fatal: true });
   }
   return (r.stdout || '').toString();
+}
+
+// whispermlx pulls the model from Hugging Face and PyTorch writes its own cache, so it
+// needs two writable directories before it can run. Under a sandbox they are the first
+// thing to break, and the error arrives as a Python traceback rather than a message.
+function cacheDirs() {
+  const home = process.env.HOME || '';
+  return {
+    hf: process.env.HF_HOME || path.join(home, '.cache', 'huggingface'),
+    torch: process.env.TORCH_HOME || path.join(home, '.cache', 'torch'),
+  };
+}
+
+function isWritable(dir) {
+  try {
+    mkdirSync(dir, { recursive: true });
+    const probe = path.join(dir, `.write-probe-${process.pid}`);
+    writeFileSync(probe, '');
+    rmSync(probe, { force: true });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function durationOf(file) {
@@ -142,14 +170,29 @@ function preflight(opts) {
     ? `${opts.bin}, model ${opts.model}`
     : `${opts.bin} not runnable`]);
 
+  const dirs = cacheDirs();
+  const hfOk = isWritable(dirs.hf);
+  const torchOk = isWritable(dirs.torch);
+  rows.push(['model cache', hfOk && torchOk ? 'ok' : 'NOT WRITABLE',
+    hfOk && torchOk ? dirs.hf : `cannot write ${hfOk ? dirs.torch : dirs.hf} — set HF_HOME and TORCH_HOME`]);
+
   const width = Math.max(...rows.map((r) => r[0].length));
   console.log('preflight');
   for (const [name, state, detail] of rows) {
     console.log(`  ${name.padEnd(width)}  ${state.padEnd(9)}  ${detail}`);
   }
 
-  const failed = rows.some((r) => r[1] === 'MISSING' || r[1] === 'TOO OLD');
-  if (failed) {
+  const failed = rows.some((r) => r[1] === 'MISSING' || r[1] === 'TOO OLD' || r[1] === 'NOT WRITABLE');
+  if (!hfOk || !torchOk) {
+    console.log(`
+whispermlx needs two writable cache directories and cannot use the defaults here.
+Point them somewhere writable, or run outside the sandbox blocking them:
+
+  export HF_HOME="$HOME/.cache/huggingface"
+  export TORCH_HOME="$HOME/.cache/torch"
+
+Note that the first is also where the ~1 GB model lives, so prefer a stable location.`);
+  } else if (failed) {
     console.log(`
 whispermlx is a Python package; install it in its own environment:
 
@@ -271,6 +314,7 @@ function main() {
     '--output_dir', mlxOut,
   ];
   if (opts.prompt) args.push('--initial_prompt', opts.prompt.slice(0, 1000));
+  if (opts.noAlign) args.push('--no_align');
   if (opts.diarize) {
     if (!opts.hfToken) throw new Error('--diarize needs --hf-token or $HF_TOKEN');
     args.push('--diarize', '--hf_token', opts.hfToken);
@@ -279,10 +323,39 @@ function main() {
   console.log(`model      ${opts.model}, language ${opts.language}`);
   console.log('transcribing (this is the slow part; whispermlx prints its own progress)');
   const startedAt = Date.now();
-  run(opts.bin, args, `whispermlx`, 6 * 60 * 60 * 1000);
+  // whispermlx transcribes, then aligns, then optionally diarizes, all inside one
+  // process. If a late stage fails, the transcript is already written and throwing
+  // it away would lose minutes of work: keep it and report what did not run.
+  const proc = spawnSync(opts.bin, args, { encoding: 'buffer', timeout: 6 * 60 * 60 * 1000 });
   const elapsed = (Date.now() - startedAt) / 1000;
+  const emitted = existsSync(mlxOut) ? readdirSync(mlxOut).filter((f) => f.endsWith('.json')) : [];
 
-  const produced = readdirSync(mlxOut).filter((f) => f.endsWith('.json'));
+  if (proc.error) {
+    throw new Error(`${opts.bin} not runnable (${proc.error.message})`);
+  }
+  if (proc.status !== 0 && emitted.length === 0) {
+    const stderr = (proc.stderr || '').toString();
+    if (/operation not permitted|permission denied/i.test(stderr) && /cache/i.test(stderr)) {
+      const dirs = cacheDirs();
+      throw new Error(`whispermlx cannot write its model cache.
+
+Either run this outside the sandbox blocking it, or point the caches somewhere writable:
+
+  export HF_HOME=<writable-dir>/huggingface
+  export TORCH_HOME=<writable-dir>/torch
+  node scripts/transcribe.mjs …          (currently ${dirs.hf} / ${dirs.torch})`);
+    }
+    throw new Error(`whispermlx exited ${proc.status} before writing any transcript — ${stderr.trim().split('\n').slice(-2).join(' ').slice(0, 300)}`);
+  }
+  let postStepError = null;
+  if (proc.status !== 0) {
+    const stderr = (proc.stderr || '').toString();
+    postStepError = stderr.trim().split('\n').filter(Boolean).slice(-2).join(' ').slice(0, 300);
+    console.error(`warning    transcription succeeded, a later whispermlx step failed — ${postStepError}`);
+    console.error('warning    the transcript is usable; segment timestamps are unaffected');
+    console.error('warning    if it keeps happening, retry with --no-align (skips the wav2vec2 model)');
+  }
+  const produced = emitted;
   if (produced.length === 0) throw new Error(`whispermlx wrote no JSON in ${mlxOut}`);
   const jsonPath = produced.includes('audio.json') ? path.join(mlxOut, 'audio.json') : path.join(mlxOut, produced[0]);
 
