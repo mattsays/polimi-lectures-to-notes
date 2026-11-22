@@ -47,8 +47,9 @@ Canonical content, rendered in the user's language:
 
 > Before I start I need four things, and one answer covers them all.
 >
-> 1. **The course** — its name and, if you have it, the WeBeep page or the list of Webex
->    recording links.
+> 1. **The course** — its name and the recordings. Either a `.txt` file with one Webex URL
+>    per line, or the links pasted directly into the message. A WeBeep course page works
+>    too if that is all you have.
 > 2. **The handouts** — the instructor's slides or notes as PDF, if they exist. Without
 >    them I can still write notes, but formulas and figures become less reliable.
 > 3. **Two or three of your existing notes**, in any format, photos included. I read them
@@ -126,6 +127,10 @@ pretending the result is unaffected:
 Use PoliWebex as described in `reference/pipeline.md` §2. If `~/tools/PoliWebex` is not
 installed, say so and ask before cloning anything. Never attempt to scrape Webex
 yourself, never bypass the SPID login.
+
+First normalise the links into `links.txt` in the course folder, one URL per line, whether
+they arrived pasted in the chat or as a file. That file is what PoliWebex consumes and
+what a later re-download will point at.
 
 PoliWebex names files after the video title, and those titles usually describe the
 lecture. Derive `id`, `type` (theory vs exercise session), `title` and candidate

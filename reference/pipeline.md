@@ -27,7 +27,8 @@ updating the matching entry: it is what makes resuming and regeneration possible
   "download": {
     "tool": "PoliWebex",
     "path": "~/tools/PoliWebex",
-    "output_dir": "raw/_incoming"
+    "output_dir": "raw/_incoming",
+    "links_file": "links.txt"
   },
   "lessons": [
     {
@@ -84,6 +85,11 @@ Many at once, one URL per line:
 ```sh
 node poliwebex -f links.txt -o "<course>/raw/_incoming"
 ```
+
+`links.txt` lives in the course folder, one URL per line, and is the canonical record of
+what was requested. Whatever form the links arrived in — pasted into the chat, a text
+file, a WeBeep page — normalise them into that file first, so a re-download months later
+does not depend on scrolling a conversation.
 
 Useful flags:
 

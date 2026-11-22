@@ -105,7 +105,7 @@ stale the first time the skill changes.
 Skill: https://github.com/mattsays/polimi-lectures-to-notes
 
 Course: <name>
-Links: <WeBeep page, or the list of Webex links>
+Links: <path to a .txt with one Webex URL per line, or paste the links here>
 My notes: <attach or paste what you have>
 ```
 
@@ -115,7 +115,7 @@ Italian:
 Skill: https://github.com/mattsays/polimi-lectures-to-notes
 
 Corso: <nome>
-Link: <pagina WeBeep o lista dei link Webex>
+Link: <percorso di un .txt con un link Webex per riga, oppure incolla i link qui>
 I miei appunti: <allega o incolla quello che hai>
 ```
 
