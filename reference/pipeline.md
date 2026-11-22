@@ -239,6 +239,21 @@ Model choice:
 | `large-v3-turbo` | ~1 GB | default: much faster, fine for lecture prose |
 | `large-v3` | ~3 GB | dense derivations, heavy jargon, or if turbo keeps mangling numbers |
 
+Measured on an M1 with turbo and no alignment: **5.7× realtime**, so a 90-minute lecture is
+about 16 minutes and a 40-hour course about 7 hours. Each transcript records its own
+measurement, so trust the header over this paragraph on another machine.
+
+### Alignment is off by default
+
+`--align` re-enables word-level alignment, which this pipeline does not use: slide alignment
+works on segment timestamps. It is off because it needs a wav2vec2 model (~380 MB) and
+NLTK's `punkt_tab` data, and during testing those failed independently, after the
+transcription had already produced a complete result. Two extra downloads for timestamps
+nobody reads is a bad default.
+
+If a late whispermlx stage fails anyway, the script keeps the transcript and warns instead
+of discarding minutes of work: the failure is reported, the segments are usable.
+
 `--initial_prompt` holds 200–500 characters of course-specific terms only: symbol names
 read aloud, acronyms, instructor names, method names. It is the cheapest accuracy win
 available, and it is why `work/glossary.txt` is updated after the first lesson rather than

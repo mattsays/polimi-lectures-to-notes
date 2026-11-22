@@ -186,14 +186,26 @@ An existing transcript is skipped unless `--force` is passed, so a batch interru
 lesson 7 restarts at lesson 7. `--initial_prompt` takes the course glossary and is the
 cheapest accuracy win available.
 
+Word-level alignment is **off by default** (`--align` turns it on). It buys word timestamps
+this pipeline does not use — slide alignment works on segment timestamps — and it costs two
+extra downloads plus two extra failure modes: a wav2vec2 model of ~380 MB and NLTK's
+`punkt_tab` data. During testing the alignment stage failed twice on exactly those, after
+the transcription itself had already succeeded.
+
 Model choice: `large-v3-turbo` (~1 GB) by default, `large-v3` (~3 GB) when the material is
 dense with formulas. Both are downloaded once and cached.
 
 ## Time, not quota
 
-There is no usage limit, so the only constraint is how long the machine takes. The
-transcript header records the measured speed (`speed: Nx realtime`) for every lecture: use
-the first real measurement to estimate a batch, and tell the user before starting it.
+There is no usage limit, so the only constraint is how long the machine takes.
+
+Measured on an M1 with `large-v3-turbo`, no alignment: **5.7× realtime** (241 s of audio in
+42 s). That puts a 90-minute lecture at about **16 minutes** and a 40-hour course at about
+**7 hours** of wall clock.
+
+Every transcript records its own measurement in the header (`speed: Nx realtime`), so the
+first real lecture on a different machine replaces these numbers with its own. Use that
+figure to estimate a batch and tell the user before starting it.
 
 Do not run lectures in parallel — MLX saturates the GPU, and two concurrent runs are slower
 than two sequential ones.
@@ -204,8 +216,8 @@ than two sequential ones.
    review before the batch.
 2. **Style calibration.** Two or three real notes fill `STYLE.md` §5 and §10 and settle
    proof depth, notation, images and callouts.
-3. **Measure the speed** on a full-length lecture and put the real number here; the
-   current expectations are estimates.
+3. **Re-measure on a full lecture.** The 5.7× figure comes from a four-minute fixture; a
+   90-minute file may differ slightly once the model stays warm.
 
 ## Known risks
 
