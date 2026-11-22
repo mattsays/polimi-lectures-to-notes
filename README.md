@@ -104,10 +104,6 @@ stale the first time the skill changes.
 ```
 Skill: https://github.com/mattsays/polimi-lectures-to-notes
 
-If it is not already cloned on this machine, clone it first:
-`git clone https://github.com/mattsays/polimi-lectures-to-notes`
-Then read SKILL.md in the skill folder and follow its "On activation" section.
-
 Course: <name>
 Links: <WeBeep page, or the list of Webex links>
 My notes: <attach or paste what you have>
@@ -118,14 +114,15 @@ Italian:
 ```
 Skill: https://github.com/mattsays/polimi-lectures-to-notes
 
-Se non è già clonata su questa macchina, clonala prima:
-`git clone https://github.com/mattsays/polimi-lectures-to-notes`
-Poi leggi SKILL.md nella cartella della skill e segui la sezione "On activation".
-
 Corso: <nome>
 Link: <pagina WeBeep o lista dei link Webex>
 I miei appunti: <allega o incolla quello che hai>
 ```
+
+That is the whole prompt: where the skill is, and the inputs. Fetching it, reading
+`SKILL.md` and running its intake are the agent's job, not instructions to repeat — a
+capable agent resolves a URL and reads the skill it points at. If it does not, that is
+worth knowing before trusting it with a whole course.
 
 If your harness discovers skills on its own and the repo is already linked into its skills
 directory, you do not even need this: a plain "turn these lecture recordings into notes,
