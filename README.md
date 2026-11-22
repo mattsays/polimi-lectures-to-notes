@@ -106,6 +106,7 @@ Skill: https://github.com/mattsays/polimi-lectures-to-notes
 
 Course: <name>
 Links: <path to a .txt with one Webex URL per line, or paste the links here>
+Handouts: <path or attachments: the instructor's slides, notes, handouts or book chapters>
 My notes: <attach or paste what you have>
 ```
 
@@ -116,8 +117,13 @@ Skill: https://github.com/mattsays/polimi-lectures-to-notes
 
 Corso: <nome>
 Link: <percorso di un .txt con un link Webex per riga, oppure incolla i link qui>
+Dispense: <percorso o allegati: slide, appunti, dispense o capitoli del professore>
 I miei appunti: <allega o incolla quello che hai>
 ```
+
+Handouts and your notes are not the same input and the skill treats them differently:
+handouts are the source of truth for formulas, figures and definitions, while your notes
+are only a style reference.
 
 That is the whole prompt: where the skill is, and the inputs. Fetching it, reading
 `SKILL.md` and running its intake are the agent's job, not instructions to repeat — a
