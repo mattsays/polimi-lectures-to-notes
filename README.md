@@ -97,44 +97,35 @@ paste instead.
 
 ## Copy-paste activation prompt
 
-For an agent that does not discover skills automatically, or that needs to be pointed at
-the workflow. Paste it and fill in the last line.
+Keep it to a pointer plus your inputs. Everything else lives in `SKILL.md`, and restating
+it here would create a second copy to keep in sync — the kind of duplication that goes
+stale the first time the skill changes.
 
 ```
-You are about to use a skill that lives in the folder polimi-lectures-to-notes.
+Read SKILL.md in this folder and follow its "On activation" section.
 
-1. Read SKILL.md in full before doing anything else. It defines six phases and a set of
-   non-negotiable rules about sources, formulas and credentials.
-2. Follow the "On activation" section exactly: ask me for the four things it lists, in
-   one single message, then stop and wait for my answer.
-3. Before promising any transcription, run `node scripts/transcribe.mjs --check` and
-   report the result plainly.
-4. Never ask me for an API key, a password or a token. If one is missing, give me the
-   exact commands to run in my terminal instead.
-5. Read STYLE.md and reference/style-calibration.md before writing any note.
-6. Work one lecture at a time and show me the first result before processing the rest.
-
-Answer me in English. Corso: <name>, links: <paste links>, notes: <paste what you have>.
+Course: <name>
+Links: <WeBeep page, or the list of Webex links>
+My notes: <attach or paste what you have>
 ```
 
-Italian version:
+Italian:
 
 ```
-Stai per usare una skill che si trova nella cartella polimi-lectures-to-notes.
+Leggi SKILL.md in questa cartella e segui la sezione "On activation".
 
-1. Leggi SKILL.md per intero prima di fare qualsiasi altra cosa. Definisce sei fasi e
-   alcune regole non negoziabili su fonti, formule e credenziali.
-2. Segui la sezione "On activation" alla lettera: chiedimi le quattro cose elencate, in
-   un solo messaggio, poi fermati e aspetta la mia risposta.
-3. Prima di promettere una trascrizione, esegui `node scripts/transcribe.mjs --check` e
-   riporta il risultato in modo chiaro.
-4. Non chiedermi mai chiavi API, password o token. Se ne manca uno, dammi i comandi esatti
-   da eseguire nel mio terminale.
-5. Leggi STYLE.md e reference/style-calibration.md prima di scrivere qualsiasi appunto.
-6. Lavora una lezione alla volta e mostrami il primo risultato prima di processare il resto.
-
-Rispondimi in italiano. Corso: <nome>, link: <incolla>, appunti: <incolla quello che hai>.
+Corso: <nome>
+Link: <pagina WeBeep o lista dei link Webex>
+I miei appunti: <allega o incolla quello che hai>
 ```
+
+If your harness discovers skills on its own, you do not even need this: a plain "turn
+these lecture recordings into notes, here are the links" is enough and the frontmatter
+description does the triggering.
+
+If the agent reads the file and still drifts — asks for an API key, skips the intake,
+starts writing before calibrating — that is an agent or harness problem. Fix it there,
+not by inflating the prompt.
 
 ## Groq key
 
