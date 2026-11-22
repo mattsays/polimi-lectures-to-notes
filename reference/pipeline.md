@@ -100,6 +100,25 @@ Useful flags:
 | `-k` | do not store the SPID password in the system keyring |
 | `-e name.surname@mail.polimi.it` | login needs the PoliMi address |
 
+### When the download does not start
+
+The most common failure is not the tool and not this skill: it is authentication.
+
+| Output | Meaning | Fix |
+|---|---|---|
+| `Cookie is not valid` then a password prompt | logged out, no saved password | run it in an interactive terminal and type the SPID password once |
+| the command hangs with no output after that prompt | stdin is not a TTY: an agent or a pipe swallowed the prompt | it must be run by the user, in their own terminal, not through an agent |
+| `Can't find video ID` | URL does not contain a 32-character recording id | copy the URL from the recording page, not from the browser address bar if it was rewritten |
+| `This video does not exist` | id wrong or not shared with the account | check the recording is still online and visible to you |
+| login loop / timeout | SPID flow changed, or slow connection | retry with `-i 2`, which doubles every timeout |
+
+Two flags matter here: `-k` skips the system keyring when it refuses to store the password
+(macOS may deny access silently), and `-i 2` scales the timeout, which is the fix for a
+login that is merely slow.
+
+Never pipeline PoliWebex into another command on first run: `node poliwebex.js ... | tail`
+loses the interactive prompt and looks like a hang.
+
 Rules:
 
 - **Credentials never enter the repository.** PoliWebex keeps the SPID password in the
