@@ -15,6 +15,12 @@ the notes trustworthy and regenerable: the writing phase may only lay out what i
 - Do not summarise. Capture the structure; compressing is the writing phase's job.
 - Keep the instructor's own wording for traps and warnings. Those sentences are the
   ones that matter verbatim, and paraphrasing loses the signal.
+- **Drop silence hallucinations.** A segment shorter than ~3 s whose text is a stock
+  phrase ("Thank you.", "Thanks for watching.", "Sottotitoli a cura di") is Whisper
+  completing a silent stretch, not something the instructor said — reproducible with two
+  seconds of pure silence at `temperature: 0`. Delete it and list it under
+  `dropped_hallucinations`, so a missing sentence is traceable to the filter instead of
+  looking like a bad recording.
 
 ## 2. Schema
 
@@ -88,6 +94,9 @@ the notes trustworthy and regenerable: the writing phase may only lay out what i
   ],
   "to_verify": [
     {"text": "...", "reason": "formula only in speech", "timestamp": "00:20:10"}
+  ],
+  "dropped_hallucinations": [
+    {"text": "Thank you.", "timestamp": "01:12:40", "reason": "2s of silence, stock phrase"}
   ],
   "gaps": [
     {"text": "...", "reason": "mentioned but not explained", "source": {"timestamp": "...", "slide": null}}

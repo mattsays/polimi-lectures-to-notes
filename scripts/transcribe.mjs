@@ -18,7 +18,7 @@ const DEFAULTS = {
   model: 'whisper-large-v3-turbo',
   language: 'it',
   chunk: 600,               // seconds per chunk; 10 min of speech FLAC is ~12 MB
-  maxUploadMb: 100,         // dev tier limit; free tier is 25
+  maxUploadMb: 25,          // Groq's free-tier ceiling; raise to 100 only on the dev tier
   baseUrl: 'https://api.groq.com/openai/v1',
   concurrency: 1,
   retries: 4,
@@ -40,7 +40,7 @@ usage: node scripts/transcribe.mjs <input media> --out <basename> [options]
   --prompt <text>      glossary prompt passed to the model
   --prompt-file <f>    read the prompt from a file (takes precedence over --prompt)
   --chunk <seconds>    chunk length, default 600
-  --max-upload-mb <n>  hard ceiling per chunk, default 100 (dev tier); use 25 on the free tier
+  --max-upload-mb <n>  hard ceiling per chunk, default 25; use 100 on the dev tier
   --no-snap            cut at the nominal boundary instead of inside the nearest silence
   --key-file <f>       Groq API key file, default ${DEFAULT_KEY_FILE}
   --base-url <url>     API base, default https://api.groq.com/openai/v1
@@ -244,7 +244,10 @@ function normaliseAndChunk(input, chunkDir, chunkSeconds, totalDuration, snapToS
     .map((line) => {
       const [name, start, end] = line.split(',');
       return { file: path.join(chunkDir, path.basename(name)), start: Number(start), end: Number(end) };
-    });
+    })
+    // ffmpeg can emit a zero-length trailing segment when a cut lands exactly on
+    // the end of the media; it carries no audio and must not reach the API.
+    .filter((row) => existsSync(row.file) && row.end - row.start > 0.05);
   if (rows.length === 0) throw new Error('ffmpeg produced no audio chunks: does the file have an audio track?');
   for (const row of rows) {
     if (!Number.isFinite(row.start) || !Number.isFinite(row.end) || row.end <= row.start) {
@@ -255,6 +258,22 @@ function normaliseAndChunk(input, chunkDir, chunkSeconds, totalDuration, snapToS
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Groq reports the account's real quotas on every response. Reading them beats
+// assuming a tier: free and dev plans differ, and the numbers move.
+function readLimits(res) {
+  const num = (name) => {
+    const raw = res.headers.get(name);
+    return raw === null || raw === '' ? null : Number(raw);
+  };
+  return {
+    audioLimit: num('x-ratelimit-limit-audio-seconds'),
+    audioRemaining: num('x-ratelimit-remaining-audio-seconds'),
+    audioReset: res.headers.get('x-ratelimit-reset-audio-seconds'),
+    requestLimit: num('x-ratelimit-limit-requests'),
+    requestRemaining: num('x-ratelimit-remaining-requests'),
+  };
+}
 
 async function transcribeChunk(file, opts, apiKey) {
   const bytes = readFileSync(file);
@@ -287,14 +306,21 @@ async function transcribeChunk(file, opts, apiKey) {
         const body = (await res.text()).slice(0, 500);
         const retriable = res.status === 429 || res.status >= 500;
         if (!retriable) throw Object.assign(new Error(`Groq ${res.status}: ${body}`), { fatal: true });
+        // Exhausted quota is not a transient error: waiting a few seconds will
+        // not help, and retrying pointlessly burns the remaining budget.
+        const wait = Number(res.headers.get('retry-after'));
+        if (res.status === 429 && Number.isFinite(wait) && wait > 0) {
+          throw Object.assign(new Error(`Groq 429: wait ${wait}s — ${body}`), { retryAfter: wait });
+        }
         throw new Error(`Groq ${res.status}: ${body}`);
       }
-      return await res.json();
+      return { data: await res.json(), limits: readLimits(res) };
     } catch (err) {
       lastError = err;
       if (err.fatal) throw err;
       if (attempt === opts.retries) break;
-      await sleep(2000 * 2 ** attempt);
+      const waitMs = err.retryAfter ? Math.min(err.retryAfter, 120) * 1000 : 2000 * 2 ** attempt;
+      await sleep(waitMs);
     }
   }
   throw lastError;
@@ -437,6 +463,7 @@ async function main() {
 
   const segments = [];
   const failures = [];
+  let lastLimits = null;
 
   for (let i = 0; i < chunks.length; i++) {
     const { file, start: offset, end } = chunks[i];
@@ -449,7 +476,8 @@ async function main() {
 
     console.log(`${label}  transcribing...`);
     try {
-      const result = await transcribeChunk(file, opts, apiKey);
+      const { data: result, limits } = await transcribeChunk(file, opts, apiKey);
+      lastLimits = limits;
       const raw = Array.isArray(result.segments) && result.segments.length
         ? result.segments
         : [{ start: 0, end: end - offset, text: result.text || '' }];
@@ -501,6 +529,12 @@ async function main() {
   console.log(`\nsegments   ${segments.length}`);
   console.log(`transcript ${opts.out}.transcript.md`);
   console.log(`subtitles  ${opts.out}.srt`);
+  if (lastLimits && lastLimits.audioLimit !== null) {
+    const used = lastLimits.audioLimit - lastLimits.audioRemaining;
+    console.log(`budget     ${used} of ${lastLimits.audioLimit} audio-seconds used, `
+      + `${lastLimits.audioRemaining} left`
+      + (lastLimits.audioReset ? ` (window resets in ${lastLimits.audioReset})` : ''));
+  }
   if (failures.length) {
     console.error(`\n${failures.length} chunk(s) failed. Re-run to retry; successful chunks are not cached.`);
     process.exitCode = 1;

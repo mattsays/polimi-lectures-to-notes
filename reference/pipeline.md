@@ -260,6 +260,35 @@ aloud, acronyms, instructor names, method names. It is the cheapest accuracy win
 available, and it is why `work/glossary.txt` is updated after the first lesson rather
 than guessed in advance.
 
+### Quotas, backoff and hallucination
+
+Groq reports the account's real quota on every response, and the script prints the balance
+after each run: `budget     27 of 7200 audio-seconds used, 7173 left (window resets in 13.5s)`.
+
+Measured on a free-plan account: **7200 audio seconds** and **2000 requests** per window.
+A 90-minute lecture is 5400 audio seconds, so it eats most of one bucket. Plan one lecture
+per refill, and read the printed reset time rather than assuming the window length.
+
+- **429 is not retried blindly.** The response carries `retry-after`; the script waits
+  that long, capped at 120 s, instead of burning the remaining budget on exponential
+  backoff. Exhausted quota will not fix itself in a few seconds.
+- **The 25 MB ceiling is enforced locally** before the upload, so a doomed request never
+  costs a round trip. `--max-upload-mb 100` only on the developer tier.
+
+**Hallucination on silence is real and reproducible.** Two seconds of pure silence,
+transcribed with `temperature: 0`, returned `" Thank you."` — the model completing a
+transcript that was not there. It appears in dead air, at pauses and at file boundaries.
+Two mitigations, in order of preference:
+
+1. drop any segment shorter than ~3 s whose text matches a stock phrase ("Thank you.",
+   "Thanks for watching.", "Sottotitoli a cura di", and their variants) — reversible,
+   cheap, and done at extraction time;
+2. keep cutting *in* silences so the affected audio is small, never remove the silence
+   itself: the timeline has to survive.
+
+Record what was dropped in the extraction JSON, so a missing sentence is traceable to the
+filter rather than to a bad recording.
+
 Other rules:
 
 - Verify timestamps are monotonic and end near the media duration: the header records

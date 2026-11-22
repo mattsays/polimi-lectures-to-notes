@@ -155,6 +155,25 @@ open, and whether Groq accepts it; on failure it prints the setup steps. The key
 **never requested in the conversation**: it is created at console.groq.com/keys and
 written by the user in their own terminal, so it never enters a chat, a log or a commit.
 
+## Quotas, measured
+
+Groq does not expose your plan in a readable place, but it reports the real quotas on every
+response. Measured on this account with a one-request probe:
+
+| Header | Value |
+|---|---|
+| `x-ratelimit-limit-audio-seconds` | 7200 |
+| `x-ratelimit-limit-requests` | 2000 |
+| per-request file ceiling | 25 MB (free) / 100 MB (developer) |
+
+Consequence for planning: a 90-minute lecture is 5400 audio seconds, so it consumes most
+of a 7200-second bucket. Expect roughly **one lecture per refill**, not a whole course in
+one sitting. The script prints the used/left balance and the reset time after every run —
+plan with that number, not with an assumption about the window length.
+
+`--max-upload-mb` defaults to 25, which is safe on both tiers; raise it to 100 only on the
+developer plan.
+
 ## Sizes, measured
 
 16 kHz mono FLAC of real Italian speech runs at about 20 KB/s.
