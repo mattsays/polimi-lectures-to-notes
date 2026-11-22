@@ -104,10 +104,9 @@ stale the first time the skill changes.
 ```
 Skill: https://github.com/mattsays/polimi-lectures-to-notes
 
-If it is not already cloned on this machine, clone it first
-(`gh repo clone mattsays/polimi-lectures-to-notes` — it is private, so it needs your
-GitHub auth). Then read SKILL.md in the skill folder and follow its "On activation"
-section.
+If it is not already cloned on this machine, clone it first:
+`git clone https://github.com/mattsays/polimi-lectures-to-notes`
+Then read SKILL.md in the skill folder and follow its "On activation" section.
 
 Course: <name>
 Links: <WeBeep page, or the list of Webex links>
@@ -119,8 +118,8 @@ Italian:
 ```
 Skill: https://github.com/mattsays/polimi-lectures-to-notes
 
-Se non è già clonata su questa macchina, clonala prima
-(`gh repo clone mattsays/polimi-lectures-to-notes` — è privata, serve la tua auth GitHub).
+Se non è già clonata su questa macchina, clonala prima:
+`git clone https://github.com/mattsays/polimi-lectures-to-notes`
 Poi leggi SKILL.md nella cartella della skill e segui la sezione "On activation".
 
 Corso: <nome>
