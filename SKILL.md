@@ -1,7 +1,7 @@
 ---
 name: polimi-lectures-to-notes
-description: Turns Politecnico di Milano Webex lecture recordings plus slides and handouts into Obsidian-style Markdown notes that follow STYLE.md, separating theory from exercise sessions and capturing worked examples, exam traps and in-class questions.
-whenToUse: The user provides one or more PoliMi Webex lecture recording links (or a WeBeep course) and/or course slides or handouts and asks for notes, transcripts, summaries or study material.
+description: Turns Politecnico di Milano Webex lecture recordings plus slides and handouts into Obsidian-style Markdown notes, transcribing locally on Apple Silicon with whispermlx and following your own writing style.
+whenToUse: The user provides PoliMi Webex lecture links (or a WeBeep course) and/or course slides or handouts and asks for notes, transcripts, summaries or study material.
 ---
 
 # PoliMi lectures to notes
@@ -10,10 +10,12 @@ Turn recorded lectures and instructor material into notes you will actually cons
 Transcription is the means, not the product: the value lies in aligning with the slides,
 in selecting what matters, and in capturing what the instructor says but never writes.
 
-This skill assumes nothing about the agent running it beyond a shell and file access. The
-work happens through `scripts/transcribe.mjs` and ordinary file operations; when a step
-says to run a command, run it. If the harness has no shell, say so and stop rather than
-simulating the result.
+Everything runs on this machine. There is no API key, no quota and no upload: the only
+cost is wall-clock time, so a whole course can be processed without asking anyone.
+
+This skill assumes nothing about the agent running it beyond a shell and file access. When
+a step says to run a command, run it. If the harness has no shell, say so and stop rather
+than simulating the result.
 
 ## Non-negotiable rules
 
@@ -27,17 +29,20 @@ simulating the result.
    from the model's own knowledge: if the instructor skipped a step and the handout does
    not cover it, record the gap.
 4. **Contradictions between lectures are recorded, not silently resolved.**
-5. **One lesson at a time.** Do not write the notes for a lesson before the user has
-   approved the previous one, unless a full batch run was explicitly requested.
+5. **Downloading and transcribing are batch; writing notes is not.** Process every
+   recording first, then write one lesson at a time and get approval before the next.
 6. **No transcript pasted into the notes.** If a sentence adds no concept, example or
    trap, it does not belong.
-7. **Credentials never enter a file.** The PoliMi SPID password stays in the system
-   keyring: never write it into the manifest, a script, a command example or a note.
+7. **Credentials never enter a file.** The PoliMi SPID session and any Hugging Face token
+   stay out of manifests, scripts, command examples and notes.
+8. **You own the setup.** If a dependency is missing, install it (phase 1) instead of
+   reporting it and stopping. Say what you are about to download and roughly how large it
+   is, then proceed.
 
 ## On activation
 
-The first message after this skill is invoked is the intake. Nothing gets downloaded,
-transcribed or written before it is answered.
+The first message after this skill is invoked is the intake. Nothing gets installed,
+downloaded, transcribed or written before it is answered.
 
 Read the user's message first, then ask **only for what is missing**, once, in the
 user's language. If the user already sent links or slides, do not ask for them again:
@@ -48,8 +53,7 @@ Canonical content, rendered in the user's language:
 > Before I start I need four things, and one answer covers them all.
 >
 > 1. **The course** — its name and the recordings. Either a `.txt` file with one Webex URL
->    per line, or the links pasted directly into the message. A WeBeep course page works
->    too if that is all you have.
+>    per line, or the links pasted directly into the message.
 > 2. **The handouts** — the instructor's slides or notes as PDF, if they exist. Without
 >    them I can still write notes, but formulas and figures become less reliable.
 > 3. **Two or three of your existing notes**, in any format, photos included. I read them
@@ -59,12 +63,12 @@ Canonical content, rendered in the user's language:
 > 4. **Which recordings are theory and which are exercise sessions**, but only if the
 >    titles do not make it obvious.
 >
-> I will not ask for your SPID password: the first Webex download runs in your terminal,
-> once, and after that it stays in your keychain.
+> Everything runs locally: no accounts, no API keys, no uploads. The first run installs a
+> few tools (about 1 GB of models) and transcribes on this Mac, so the whole course stays
+> on disk.
 >
-> Then I will build the course manifest from the titles, calibrate the style on your
-> notes, and take one lecture end to end so you can judge the result before I process the
-> rest.
+> Then I will download every recording, transcribe them all, and start writing notes one
+> lesson at a time so you can judge the first result before I continue.
 
 Rules for this message:
 
@@ -73,18 +77,12 @@ Rules for this message:
   are resuming from, its status, and the open issues.
 - **Ask once.** If an answer is partial, proceed with what you have and record the gap in
   `manifest.open_issues`. Never ask the same thing twice.
-- **Never request credentials**, and never offer to run the first PoliWebex login.
+- **Never ask for credentials.** There are none to ask for; the Webex session comes from
+  the user's own browser, once, and the instructions are in `reference/pipeline.md` §2.
 - **Never ask what you can find out**: the course name from a WeBeep URL, the lesson type
   from a filename, the lesson count from the links.
 - **If the user says "just start"**, start: write the first lesson with the proposed
-  defaults, keep `STYLE.md` marked uncalibrated, and calibrate at the phase 5 checkpoint.
-- **Run the preflight before promising anything.** `node scripts/transcribe.mjs --check`
-  verifies ffmpeg, ffprobe, node, the key and whether the API accepts it, in a second.
-  If the key is missing or rejected, hand the user the setup steps and let them run them
-  in their own terminal. Never ask for the key value, and never write it into a file on
-  their behalf: you would need the secret in the conversation first.
-- **If the user pastes a key into the chat anyway**, tell them to rotate it at
-  console.groq.com/keys and store the new one locally.
+  defaults, keep `STYLE.md` marked uncalibrated, and calibrate at the first checkpoint.
 - **Name the next step**: after the answers, say what you are about to do before doing it.
 
 ## Supporting files
@@ -95,16 +93,17 @@ Read only what the current phase needs, not everything up front.
 |---|---|
 | `STYLE.md` | Before writing any notes. Single source of style truth. |
 | `reference/style-calibration.md` | Phase 0, the first time a course is proposed. |
-| `reference/pipeline.md` | Phases 0–2: manifest, PoliWebex, audio prep, Groq transcription, slide alignment. |
-| `reference/extraction.md` | Phase 3: JSON schema, exam-signal taxonomy, coverage check. |
+| `reference/pipeline.md` | Phases 1–3: installation, PoliWebex download, local transcription, slide extraction and alignment. |
+| `reference/extraction.md` | Phase 4: JSON schema, exam-signal taxonomy, coverage check. |
 | `reference/templates.md` | Phase 4: Markdown skeletons for theory and exercise sessions. |
-| `scripts/transcribe.mjs` | Phase 2. Run it; read it only when it fails. |
+| `scripts/transcribe.mjs` | Phase 3. Run it; read it only when it fails. |
+| `scripts/poliwebex-cookie.mjs` | Phase 2, only when PoliWebex asks for a password. |
 
 ## Flow
 
 ### Phase 0 — Intake and style calibration
 The request itself is defined in *On activation*. This phase is what to do with the
-answers. It is blocking, and it happens once per course.
+answers, and it happens once per course.
 
 1. **Build the skeleton**: course folder and `manifest.json` per `reference/pipeline.md`
    §1, every lesson `status: todo`. Derive titles, ids and types from filenames where the
@@ -123,69 +122,71 @@ pretending the result is unaffected:
 | Slides or handouts | no reliable source for formulas, alignment degrades | every formula goes to `to_verify`, notes cite timestamps only |
 | Lesson types | the theory/exercise split is unknown | keep everything under `teoria/`, resolve it after the first read |
 
-### Phase 1 — Download
-Use PoliWebex as described in `reference/pipeline.md` §2. If `~/tools/PoliWebex` is not
-installed, say so and ask before cloning anything. Never attempt to scrape Webex
-yourself, never bypass the SPID login.
-
-First normalise the links into `links.txt` in the course folder, one URL per line, whether
-they arrived pasted in the chat or as a file. That file is what PoliWebex consumes and
-what a later re-download will point at.
-
-If PoliWebex prints `Cookie is not valid`, or asks for a password, stop: the account
-probably signs in with CIE, and PoliWebex only automates a username+password form. Never
-ask for a password and never attempt the login yourself. Walk the user through the cookie
-route in `reference/pipeline.md` §2 — they sign in to Webex in their own browser, copy a
-request as cURL, and `scripts/poliwebex-cookie.mjs` stores and validates it. It is their
-session: the cookie must never be pasted into the chat, and this step cannot be
-automated for them.
-
-PoliWebex names files after the video title, and those titles usually describe the
-lecture. Derive `id`, `type` (theory vs exercise session), `title` and candidate
-`topics` from the filename before transcribing: it costs nothing and it seeds both the
-manifest and the glossary. Then rename to `raw/L01.mp4`, validate with `ffprobe` and
-record duration.
-
-### Phase 2 — Transcription and alignment
-Transcribe with `scripts/transcribe.mjs`, which calls the Groq API directly:
+### Phase 1 — Bootstrap
+Make the machine capable of the whole job before touching a single lecture. Run the
+preflight, install what is missing, and verify again:
 
 ```sh
-node scripts/transcribe.mjs raw/L01.mp4 --out work/L01 --language it \
-  --prompt-file work/glossary.txt
+node scripts/transcribe.mjs --check
 ```
 
-The key is resolved automatically from `--key-file`, then `$GROQ_API_KEY`, then
-`~/.config/polimi-lectures/groq.key`: never ask the user to paste it into the conversation.
+| Missing | Install | Size |
+|---|---|---|
+| `whispermlx` | `uv tool install whispermlx` (or a dedicated venv) | model ~1 GB on first run |
+| `ffmpeg`, `ffprobe` | `brew install ffmpeg` | small |
+| PoliWebex | `git clone https://github.com/sup3rgiu/PoliWebex ~/tools/PoliWebex && cd ~/tools/PoliWebex && npm install` | ~150 MB (bundled Chromium) |
 
-If the script reports no key, tell the user exactly this and stop: create one at
-console.groq.com/keys, then in their terminal
-`mkdir -p ~/.config/polimi-lectures`, write the key to
-`~/.config/polimi-lectures/groq.key`, `chmod 600` it, and re-run `--check`.
+Install in that order and re-run the preflight until it is green. If `uv` is absent, use
+`python3 -m venv ~/.venvs/mlx && ~/.venvs/mlx/bin/pip install whispermlx` and pass
+`--whispermlx ~/.venvs/mlx/bin/whispermlx` on every call; record that path in the manifest
+so later runs do not have to guess.
 
-It normalises to 16 kHz mono FLAC, cuts inside silences where possible, keeps every
-upload below the limit, timestamps every segment and merges. Add `--provider cloudflare`
-for Workers AI, or `--provider whispermlx` to run locally on Apple Silicon with no quota
-and no upload. Credentials and the preflight differ per provider, and the script says
-which file to write. Keep `work/glossary.txt`
-current: the glossary prompt is the cheapest accuracy win available. Then extract slide
-text and build the slide ↔ time map as described in `reference/pipeline.md` §5–6.
+Do not install anything else. No API keys, no cloud accounts: this pipeline has none.
 
-### Phase 3 — Structured extraction
-Produce `work/<id>.json` from transcript plus slides, following the schema in
-`reference/extraction.md`. Write no Markdown in this phase. Apply the exam-signal
-taxonomy: this is the step that decides whether the notes are worth anything.
+### Phase 2 — Download everything
+Use PoliWebex as described in `reference/pipeline.md` §2. First normalise the links into
+`links.txt` in the course folder, one URL per line, whether they arrived pasted in the chat
+or as a file: that is what PoliWebex consumes and what a re-download points at.
 
-### Phase 4 — Writing
-Render the JSON into Markdown according to `STYLE.md` and `reference/templates.md`.
-Nothing is added that is not in the JSON; this phase only lays out.
+Download the whole batch, not one file at a time — it is a slow, unattended step. Then map
+each produced file to a lesson id and rename it to `raw/L01.mp4`.
 
-### Phase 5 — Checkpoint
-Present the finished file with a three-line summary: what it contains, which `to_verify`
-items remain open, what you think is missing. Ask for confirmation or corrections before
-moving to the next lesson. Style corrections go back into `STYLE.md`, not only into that
-one file, so they hold for every later lesson.
+If PoliWebex prints `Cookie is not valid` or asks for a password, stop and read
+`reference/pipeline.md` §2: the account probably signs in with CIE, and the fix is a
+browser cookie the user supplies once. Never ask for a password, never attempt the login.
 
-### Phase 6 — Course merge
+### Phase 3 — Transcribe everything
+Transcribe every lesson before writing any note. This is unattended work, and doing it in
+one pass means the slow part is over before the interesting part starts.
+
+```sh
+node scripts/transcribe.mjs raw/L01.mp4 --out work/L01 --prompt-file work/glossary.txt
+```
+
+One invocation per lecture: whispermlx does its own VAD chunking, so there is nothing to
+split and no offsets to reconstruct. An existing transcript is skipped unless `--force` is
+passed, which makes the loop resumable. Keep `work/glossary.txt` current — the glossary
+improves technical terms more than any other single change.
+
+Then extract slide text and build the slide ↔ time map as described in
+`reference/pipeline.md` §5–6.
+
+### Phase 4 — Notes, one lesson at a time
+Now the loop that produces deliverables. For each lesson, in order:
+
+1. **Extract** `work/<id>.json` from transcript plus slides, following
+   `reference/extraction.md`. No Markdown in this step.
+2. **Write** the Markdown per `STYLE.md` and `reference/templates.md`. Nothing is added
+   that is not in the JSON.
+3. **Checkpoint**: present the file with a three-line summary — what it contains, which
+   `to_verify` items remain open, what you think is missing. Ask for confirmation before
+   the next lesson.
+4. **Fold corrections back** into `STYLE.md`, not only into that file, so they hold for
+   every later lesson.
+
+Never write lesson five before lesson one has been approved.
+
+### Phase 5 — Course merge
 Once the lessons are done, update `_glossario.md`, `_indice.md` and `_errori-esame.md`,
 and the cross-links between theory and exercise sessions.
 
@@ -195,6 +196,7 @@ and the cross-links between theory and exercise sessions.
 <course>/
 ├── README.md            index, status, how to regenerate
 ├── manifest.json        source of truth for the lessons
+├── links.txt            the requested recordings, one URL per line
 ├── teoria/L01-….md
 ├── esercitazioni/E01-….md
 ├── _glossario.md
@@ -207,14 +209,16 @@ and the cross-links between theory and exercise sessions.
 `teoria/` and `esercitazioni/` hold deliverables only. A mixed session goes where most of
 its time is spent, and the frontmatter says so.
 
-## Cost and speed
+## Time
 
-Groq `whisper-large-v3-turbo` costs $0.04 per audio hour, so a 40-hour course is under
-two dollars. Upload is the bottleneck, not transcription: process one lecture at a time
-and keep the transcript on disk so nothing is ever paid for twice.
+There is no quota, so the only limit is how long this machine takes. The transcript header
+records the measured speed (`speed: Nx realtime`) for every lecture: use the first real
+measurement to estimate the rest instead of guessing, and tell the user before starting a
+long batch. Do not run whispermlx on several lectures in parallel — MLX saturates the GPU
+and concurrent runs are slower, not faster.
 
 ## Regeneration
 
 The manifest and the intermediate JSON exist for this: if `STYLE.md` changes, rerun phase
-4 only. If the transcription engine changes, rerun from phase 2. Never restart from phase
-0 without a reason.
+4 only. If the model or the transcript changes, rerun from phase 3. Never restart from
+phase 0 without a reason.

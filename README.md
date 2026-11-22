@@ -3,27 +3,26 @@
 A portable agent skill that turns Politecnico di Milano Webex lecture recordings plus
 slides and handouts into Obsidian-style Markdown notes, following your own writing style.
 
-It is not tied to a specific agent harness. It needs a shell, file access, `node` and
-`ffmpeg`; everything else is plain files and one Node script with no dependencies.
+Everything runs locally on Apple Silicon. No API keys, no accounts, no quota, no upload:
+the recordings never leave the machine, and the only cost is wall-clock time.
 
 ## Status
 
-v1 — pipeline tested end to end: ffmpeg normalisation, silence-aware chunking, Groq
-transcription against the real API, timestamp merge. Not yet run on a full real lecture.
-Missing inputs are listed under *Next steps*.
+v1 — download and transcription verified end to end; the note-writing phases tested on
+fixtures, not yet on a full real course.
 
 ## Contents
 
 | Path | What it is |
 |---|---|
-| `SKILL.md` | The skill itself: frontmatter, intake on activation, six-phase flow, non-negotiable rules. |
+| `SKILL.md` | The skill itself: frontmatter, intake on activation, six phases, non-negotiable rules. |
 | `STYLE.md` | Notes style. Binding rules; `[TO CONFIRM]` sections need calibration. |
 | `reference/style-calibration.md` | Phase 0: what to ask for, what to observe in real notes, how to turn observations into rules. |
-| `reference/pipeline.md` | Phases 0–2: manifest schema, PoliWebex download, Groq transcription, slide extraction and alignment. |
-| `reference/extraction.md` | Phase 3: JSON schema, exam-signal taxonomy, coverage check. |
+| `reference/pipeline.md` | Phases 1–3: manifest, installation, PoliWebex download, local transcription, slide extraction and alignment. |
+| `reference/extraction.md` | Phase 4: JSON schema, exam-signal taxonomy, coverage check. |
 | `reference/templates.md` | Phase 4: Markdown skeletons and course-level files. |
-| `scripts/transcribe.mjs` | ffmpeg normalisation, chunking, Groq API calls, timestamp merge, preflight. |
-| `scripts/poliwebex-cookie.mjs` | stores a Webex session cookie for PoliWebex, for accounts that sign in with CIE instead of a password. |
+| `scripts/transcribe.mjs` | ffmpeg normalisation, whispermlx invocation, transcript and subtitle output, preflight. |
+| `scripts/poliwebex-cookie.mjs` | Stores a Webex session cookie, for accounts that sign in with CIE instead of a password. |
 
 ## How it is designed
 
@@ -34,41 +33,39 @@ Missing inputs are listed under *Next steps*.
    course is ask for two or three existing notes. Every `[TO CONFIRM]` in `STYLE.md` is a
    guess until that happens.
 3. **The manifest is the source of truth.** Lesson status decides where to resume, so
-   nothing silently restarts from zero. PoliWebex filenames become lesson titles and
-   candidate topics, since they usually describe the lecture.
-4. **Transcription is a script, not a tool call.** Groq is called directly with its
-   documented preprocessing, so the audio pipeline is inspectable, re-runnable and
-   independent of whatever built-in transcription the harness happens to offer.
+   nothing silently restarts from zero.
+4. **Batch before interactive.** Every recording is downloaded and transcribed first, in
+   one unattended pass; then notes are written one lesson at a time with a checkpoint.
+   The slow, boring part finishes before the interesting part starts.
 
 The parts that make the notes better than a transcript are the slide alignment, the
 selection rules and the exam-signal taxonomy — not the speech-to-text.
 
 ## Requirements
 
-| Requirement | Why | Harness-specific? |
-|---|---|---|
-| An agent with shell + file access | it runs `ffmpeg` and writes notes | no, any agent |
-| `node` 18 or newer | `scripts/transcribe.mjs` uses built-in `fetch` | no |
-| `ffmpeg` + `ffprobe` | normalisation, chunking, silence detection, validation | no |
-| Network access to `api.groq.com` | transcription | no |
-| `aria2c` + PoliWebex | downloading the recordings | no |
-| A Groq API key | transcription | no |
+| Requirement | Why |
+|---|---|
+| Apple Silicon Mac | whispermlx runs on MLX; there is no CUDA path and no x86 path |
+| `node` 18 or newer | both scripts use built-in `fetch` |
+| `ffmpeg` + `ffprobe` | audio normalisation, duration checks |
+| `whispermlx` | local transcription (Python package) |
+| `aria2c` | PoliWebex uses it for downloading |
+| PoliWebex | SPID login and the actual Webex download |
 
-Nothing in the workflow calls a harness API, an MCP server or a proprietary tool. Any agent
-that can read these files and run a shell command can execute it.
+Nothing here calls a harness API, an MCP server or a proprietary tool. Any agent that can
+read these files and run a shell command can execute it.
 
 ## Quickstart
 
-The shortest path from nothing to one finished lecture.
-
-1. **Install PoliWebex**, which handles the download:
+1. **Transcription engine** — `uv tool install whispermlx` (its own environment, not the
+   system Python). The model downloads on first use: ~1 GB.
+2. **Media tools** — `brew install ffmpeg`.
+3. **Downloader** —
    `git clone https://github.com/sup3rgiu/PoliWebex ~/tools/PoliWebex && cd ~/tools/PoliWebex && npm install`
-2. **Add a transcription backend**: a Groq key or a Cloudflare token and account id — see
-   *Providers and credentials*.
-3. **Hand over your Webex session**, because PoliWebex cannot log in with CIE — see
-   *Webex session* below.
-4. **Check the setup**: `node scripts/transcribe.mjs --check --provider cloudflare`
-5. **Run one lecture end to end** before trusting it with a whole course.
+   (~150 MB of bundled Chromium).
+4. **Webex session** — the first download needs a browser cookie, once; see below.
+5. **Verify** — `node scripts/transcribe.mjs --check`
+6. **Run one lecture end to end** before trusting it with a whole course.
 
 ### Webex session
 
@@ -83,9 +80,8 @@ Webex home page instead of the recording. It does reuse a stored cookie, so give
 
 The helper pulls the cookie out of the pasted command, checks it against Webex, and only
 then writes it into `~/tools/PoliWebex/config.json` (override with `--poliwebex <dir>` or
-`$POLIWEBEX_DIR`). It is never echoed and never enters the shell history. Run
-`--check` when downloads start failing again: cookies expire, typically once per study
-session.
+`$POLIWEBEX_DIR`). It is never echoed and never enters the shell history. Run `--check`
+when downloads start failing again: cookies expire, typically once per study session.
 
 The `X11 is not installed` warning from keytar is harmless on macOS, and `-k` silences it.
 
@@ -121,7 +117,7 @@ Check your harness's documentation for its exact root; the only requirement is t
 | Item | Portable? |
 |---|---|
 | `SKILL.md`, `STYLE.md`, the four references | yes, plain Markdown |
-| `scripts/transcribe.mjs` | yes, node standard library only |
+| `scripts/*.mjs` | yes, node standard library only |
 | Discovery path and the `whenToUse` frontmatter key | depends: DSH reads it, other harnesses ignore it |
 | `name` + `description` frontmatter | used by most skill-capable harnesses |
 
@@ -163,164 +159,69 @@ That is the whole prompt: where the skill is, and the inputs. Fetching it, readi
 capable agent resolves a URL and reads the skill it points at. If it does not, that is
 worth knowing before trusting it with a whole course.
 
-If your harness discovers skills on its own and the repo is already linked into its skills
-directory, you do not even need this: a plain "turn these lecture recordings into notes,
-here are the links" is enough and the frontmatter description does the triggering.
-
 If the agent reads the file and still drifts — asks for an API key, skips the intake,
 starts writing before calibrating — that is an agent or harness problem. Fix it there,
 not by inflating the prompt.
 
-## Providers and credentials
-
-Two transcription backends, selected with `--provider` (default `groq`):
-
-| | Groq | Cloudflare Workers AI | whispermlx (local) |
-|---|---|---|---|
-| Model | `whisper-large-v3-turbo` | `@cf/openai/whisper-large-v3-turbo` | `large-v3-turbo` |
-| Price per audio hour | $0.04 | $0.031 | $0 |
-| Free allowance | 7200 audio-seconds per window | 10,000 neurons/day ≈ 3.5 h of audio | unlimited |
-| Beyond the allowance | pay per second | needs the Workers Paid plan | — |
-| Glossary prompt | yes | yes | yes (`--initial_prompt`) |
-| `condition_on_previous_text` | not exposed | exposed, set to `false` | not exposed |
-| API shape | OpenAI-compatible multipart | one endpoint per model, JSON + base64 | local CLI writing JSON files |
-
-Both credentials live outside any repo, so they cannot be committed or copied into a
-course folder.
-
-### Groq
-
-Resolved from `--key-file`, then `$GROQ_API_KEY`, then `$GROQ_API_KEY_FILE`, then
-`~/.config/polimi-lectures/groq.key`. Create a key at console.groq.com/keys.
-
-### Cloudflare
-
-1. Sign up at <https://dash.cloudflare.com/sign-up/workers-and-pages>.
-2. Go to **Workers AI** → **Use REST API**.
-3. Copy the **Account ID**.
-4. **Create a Workers AI API Token** and copy it.
-5. Store both in your own terminal:
+## Transcription
 
 ```sh
-mkdir -p ~/.config/polimi-lectures
-printf '%s' '<api-token>'    > ~/.config/polimi-lectures/cloudflare.key
-printf '%s' '<account-id>'   > ~/.config/polimi-lectures/cloudflare.account
-chmod 600 ~/.config/polimi-lectures/cloudflare.key
+node scripts/transcribe.mjs raw/L01.mp4 --out work/L01 --language it \
+  --prompt-file work/glossary.txt
 ```
 
-Resolved from `--key-file` / `--account-id`, then `$CLOUDFLARE_API_TOKEN` and
-`$CLOUDFLARE_ACCOUNT_ID`, then those two files.
+One invocation per lecture. whispermlx is a [WhisperX](https://github.com/m-bain/whisperX)
+fork on [MLX](https://github.com/ml-explore/mlx): word-level timestamps and VAD come for
+free, and it does its own internal chunking, so there is nothing to split here and no
+offsets to reconstruct.
 
-To stop passing `--provider cloudflare` on every run, make it the default once:
+| Output | Content |
+|---|---|
+| `work/L01.transcript.md` | header plus `[HH:MM:SS]` blocks |
+| `work/L01.srt` | segment subtitles, for jumping to a moment |
+| `work/L01.segments.json` | segments plus the measured speed |
+| `work/L01.work/` | normalised audio and engine output, regenerable |
 
-```sh
-printf '%s' 'cloudflare' > ~/.config/polimi-lectures/provider
-```
+An existing transcript is skipped unless `--force` is passed, so a batch interrupted at
+lesson 7 restarts at lesson 7. `--initial_prompt` takes the course glossary and is the
+cheapest accuracy win available.
 
-Precedence: `--provider` flag, then `$LECTURE_STT_PROVIDER`, then that file, then `groq`.
+Model choice: `large-v3-turbo` (~1 GB) by default, `large-v3` (~3 GB) when the material is
+dense with formulas. Both are downloaded once and cached.
 
-### whispermlx (local, Apple Silicon)
+## Time, not quota
 
-A [WhisperX](https://github.com/m-bain/whisperX) fork with the inference backend swapped to
-[MLX](https://github.com/ml-explore/mlx), so it runs on the Apple Silicon GPU. Word-level
-timestamps and VAD come for free; speaker diarization is available through pyannote.
+There is no usage limit, so the only constraint is how long the machine takes. The
+transcript header records the measured speed (`speed: Nx realtime`) for every lecture: use
+the first real measurement to estimate a batch, and tell the user before starting it.
 
-The appeal is the one thing the hosted providers cannot offer: **no quota and no upload**.
-A 40-hour course costs nothing but wall-clock time, and the recordings never leave the
-machine — which for PoliMi lectures is the better default anyway.
-
-```sh
-uv tool install whispermlx
-whispermlx --help
-```
-
-Install it in its own environment, not with the system Python. The model downloads from
-Hugging Face on first use (~1 GB for `large-v3-turbo`, ~3 GB for `large-v3`).
-
-```sh
-node scripts/transcribe.mjs raw/L01.mp4 --out work/L01 --language it --provider whispermlx
-```
-
-Use `--whispermlx <path>` or `$WHISPERMLX_BIN` when the binary lives in a virtualenv, and
-`--model large-v3` when accuracy matters more than time. Diarization needs a Hugging Face
-token plus acceptance of the pyannote model terms:
-
-```sh
-node scripts/transcribe.mjs raw/L01.mp4 --out work/L01 --provider whispermlx \
-  --diarize --hf-token <token>
-```
-
-Make it the default with `printf '%s' 'whispermlx' > ~/.config/polimi-lectures/provider`.
-
-### Verifying
-
-```sh
-node scripts/transcribe.mjs --check --provider cloudflare
-```
-
-It reports node, ffmpeg, ffprobe, where the credentials were found, whether their
-permissions are too open, and whether the account accepts them. On failure it prints the
-setup steps.
-
-Credentials are **never requested in the conversation**: they are created in the
-provider's dashboard and written by the user in their own terminal, so they never enter a
-chat, a log or a commit. If one does get pasted into a chat, rotate it.
-
-## Quotas, measured
-
-Groq reports the real quotas on every response; Cloudflare does not, so its allowance has
-to be tracked from the dashboard.
-
-| | Groq | Cloudflare |
-|---|---|---|
-| Bucket | 7200 audio-seconds | 10,000 neurons/day | none |
-| Requests | 2000 per window | not published |
-| File ceiling | 25 MB free / 100 MB dev | 100 MB per request |
-
-A 90-minute lecture is 5400 audio seconds, so it consumes most of a Groq bucket: expect
-roughly **one lecture per refill**. On Cloudflare the same lecture is about 3600 neurons,
-so the free daily allowance covers roughly **2.5 lectures a day**. The script prints
-Groq's used/left balance after every run — plan with that number, not with an assumption
-about the window length.
-
-`--max-upload-mb` defaults to 25, which is safe on every plan and well below Cloudflare's
-100 MB request limit. Base64 encoding inflates a 12 MB chunk to about 16 MB on the wire.
-
-## Sizes, measured
-
-16 kHz mono FLAC of real Italian speech runs at about 20 KB/s.
-
-| Input | FLAC size | Fits one request? |
-|---|---|---|
-| 10 min | ~12 MB | yes |
-| 30 min | ~36 MB | no on the 25 MB free tier |
-| 90 min | ~108 MB | no, not even on the 100 MB dev tier |
-
-This is why 600-second chunks are the default: a lecture does not fit in one request at
-any tier, and chunking also isolates retries to a single piece.
+Do not run lectures in parallel — MLX saturates the GPU, and two concurrent runs are slower
+than two sequential ones.
 
 ## Next steps
 
-1. **PoliWebex.** Clone it, run `npm install`, download one lecture with
-   `node poliwebex -v "<url>" -o raw/_incoming`, and confirm the filename → manifest mapping.
-2. **Style calibration.** Provide two or three real notes; they fill `STYLE.md` §5 and §10
-   and settle proof depth, notation, images and callouts.
-3. **First real run.** One lecture end to end, reviewed, before batch processing.
+1. **First real course.** One lecture end to end — download, transcribe, notes — and
+   review before the batch.
+2. **Style calibration.** Two or three real notes fill `STYLE.md` §5 and §10 and settle
+   proof depth, notation, images and callouts.
+3. **Measure the speed** on a full-length lecture and put the real number here; the
+   current expectations are estimates.
 
 ## Known risks
 
 - Spoken mathematics and numbers are unreliable; the design forces symbolic content to
   come from slides or legible board frames.
-- Whisper degrades on long stretches of near-identical audio (repetition loops lose
-  accents and punctuation). Lectures are fine; edited compilations of repeated phrases
-  are not.
+- Whisper hallucinates in dead air: two seconds of pure silence, at `temperature: 0`,
+  returned `" Thank you."`. The extraction phase drops stock phrases and records them in
+  `dropped_hallucinations`.
 - Scanned or handwritten slides need page rendering, not text extraction.
-- Poor audio in some recordings degrades every later phase; catch it at download time
-  with `ffprobe` and a spot listen.
+- Poor audio in some recordings degrades every later phase; catch it at download time with
+  `ffprobe` and a spot listen.
 - PoliWebex drives a real SPID login: it breaks when PoliMi changes the login flow, and it
   cannot handle CIE (phone) logins at all. Use `scripts/poliwebex-cookie.mjs` to inject a
   browser session cookie instead.
-  Treat a failed download as a tool problem, not something to work around.
+- whispermlx tracks WhisperX upstream: a fork can lag behind fixes, and the MLX path has
+  no CUDA equivalent, so this pipeline is Apple Silicon only by design.
 
 ## Credits
 
@@ -333,6 +234,11 @@ It does the hard part of this pipeline: the SPID login and the Webex download. T
 invokes it as an external tool and does not redistribute its code, but the whole first
 phase exists because that project works.
 
-The rest of the pipeline stands on [ffmpeg](https://ffmpeg.org) and on Groq's hosted
-Whisper (`whisper-large-v3` / `whisper-large-v3-turbo`), itself derived from
-[OpenAI's Whisper](https://github.com/openai/whisper) model weights.
+**whispermlx** — <https://github.com/KalebJS/whispermlx> — a WhisperX fork running on
+[MLX](https://github.com/ml-explore/mlx), which does the transcription locally. Built on
+[WhisperX](https://github.com/m-bain/whisperX) by Max Bain et al.,
+[mlx-whisper](https://github.com/ml-explore/mlx-examples/tree/main/whisper),
+[pyannote-audio](https://github.com/pyannote/pyannote-audio) and
+[OpenAI Whisper](https://github.com/openai/whisper).
+
+The rest of the pipeline stands on [ffmpeg](https://ffmpeg.org).

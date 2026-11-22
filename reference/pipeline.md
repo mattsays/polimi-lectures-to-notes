@@ -1,7 +1,7 @@
 # Pipeline reference
 
-Operational detail for phases 0–2. Verified tooling on this machine: `ffmpeg`,
-`ffprobe`, `pdftotext`, `pdftoppm`, `pdfinfo`, `node`, `aria2c`.
+Operational detail for phases 1–3. Verified tooling on this machine: `ffmpeg`,
+`ffprobe`, `pdftotext`, `pdftoppm`, `pdfinfo`, `node`, `aria2c`, `uv`.
 
 ## 1. `manifest.json`
 
@@ -18,10 +18,10 @@ updating the matching entry: it is what makes resuming and regeneration possible
     "created": "2026-11-22"
   },
   "transcription": {
-    "engine": "groq",
-    "model": "whisper-large-v3-turbo",
+    "engine": "whispermlx",
+    "model": "large-v3-turbo",
     "language": "it",
-    "chunk_seconds": 600,
+    "bin": null,
     "glossary_prompt": "spline, interpolazione, Runge, nodi di Chebyshev, ..."
   },
   "download": {
@@ -36,7 +36,7 @@ updating the matching entry: it is what makes resuming and regeneration possible
       "type": "theory",
       "title": "Interpolazione polinomiale",
       "date": "2026-03-01",
-      "url": "https://politecnicomilano.webex.com/webappng/sites/politecnicomilano/recording/play/…",
+      "url": "https://politecnicomilano.webex.com/recordingservice/…",
       "duration_s": null,
       "video": "raw/L01.mp4",
       "slides": ["assets/L01.pdf"],
@@ -57,6 +57,9 @@ updating the matching entry: it is what makes resuming and regeneration possible
 `extracted` → `written` → `reviewed`. The status is the resume point: never jump ahead
 silently, and record every unresolved doubt in `open_issues`.
 
+`transcription.bin` records the whispermlx path when it is not on `PATH` (a virtualenv),
+so later runs and later sessions do not have to rediscover it.
+
 ## 2. Download with PoliWebex
 
 <https://github.com/sup3rgiu/PoliWebex> handles the Politecnico SPID login, the Webex
@@ -66,30 +69,31 @@ contributors, MIT licensed: credit it when you report results to the user.
 
 ```sh
 git clone https://github.com/sup3rgiu/PoliWebex ~/tools/PoliWebex
-cd ~/tools/PoliWebex && npm install && node poliwebex -h
+cd ~/tools/PoliWebex && npm install && node poliwebex.js -h
 ```
 
-`npm install` pulls Puppeteer, which fetches its own Chromium: the system browser is
-not required. Prerequisites, both already present here: `aria2c` and `ffmpeg` on `PATH`,
-plus Node above v14.
+`npm install` pulls Puppeteer, which fetches its own Chromium: the system browser is not
+required. Prerequisites: `aria2c` and `ffmpeg` on `PATH`, plus Node above v14.
+
+Note the entry point is `poliwebex.js`, not `poliwebex`.
 
 Single recording:
 
 ```sh
 cd ~/tools/PoliWebex
-node poliwebex -v "<webex-url>" -o "<course>/raw/_incoming"
+node poliwebex.js -v "<webex-url>" -o "<course>/raw/_incoming"
 ```
 
-Many at once, one URL per line:
+The whole batch, one URL per line:
 
 ```sh
-node poliwebex -f links.txt -o "<course>/raw/_incoming"
+node poliwebex.js -f links.txt -o "<course>/raw/_incoming"
 ```
 
 `links.txt` lives in the course folder, one URL per line, and is the canonical record of
-what was requested. Whatever form the links arrived in — pasted into the chat, a text
-file, a WeBeep page — normalise them into that file first, so a re-download months later
-does not depend on scrolling a conversation.
+what was requested. Whatever form the links arrived in — pasted into the chat, a text file,
+a WeBeep page — normalise them into that file first, so a re-download months later does not
+depend on scrolling a conversation.
 
 Useful flags:
 
@@ -100,17 +104,54 @@ Useful flags:
 | `-k` | do not store the SPID password in the system keyring |
 | `-e name.surname@mail.polimi.it` | login needs the PoliMi address |
 
+### From filename to manifest entry
+
+PoliWebex names files after the video title, and those titles usually describe the
+content of the lecture. Use them: derive `title`, `topics` and the lesson `type` from the
+filename before transcribing anything, because it costs nothing and it seeds the glossary.
+
+```
+Lesson number 12 - Interpolazione polinomiale e fenomeno di Runge.mp4
+Esercitazione 3 - Esercizi su spline e minimi quadrati.mp4
+```
+
+- `id`: sequence number, `L12` for theory, `E03` for exercise sessions.
+- `type`: `exercise` if the title contains "esercitazione", "esercizi", "laboratorio";
+  otherwise `theory`. Ambiguous titles get asked about, since they decide which folder the
+  notes end up in.
+- `title`: the descriptive part of the filename, cleaned of the "Lesson number N -" prefix.
+- `topics`: split the descriptive part on "e", ",", " - " into candidate topics. These are
+  candidates, not final: fix them after the extraction phase, when you know what was
+  actually covered.
+- `date`: take it from the Webex page or the file mtime, never invented.
+- Rename to `raw/L01.mp4` and record both the original filename and the final path, so a
+  re-download can be matched to the right lesson.
+
+Download in batches, then map and rename. Do not rename inside `_incoming` while a
+download is still running.
+
+- **Validate what came back**:
+  `ffprobe -v error -show_entries format=duration -of csv=p=0 raw/L01.mp4`
+  A missing audio stream or a duration far from the expected lesson length means the
+  download or the recording is broken: stop and report, do not transcribe silence.
+- **Check for a native transcript first.** If the recording page also offers a Webex
+  transcript or captions, use it and skip phase 3 entirely.
+- Downloads are slow and long: run them as a background job, one batch at a time.
+
 ### When the download does not start
 
 The most common failure is not the tool and not this skill: it is authentication.
 
 | Output | Meaning | Fix |
 |---|---|---|
-| `Cookie is not valid` then a password prompt | logged out, no saved password | run it in an interactive terminal and type the SPID password once |
-| the command hangs with no output after that prompt | stdin is not a TTY: an agent or a pipe swallowed the prompt | it must be run by the user, in their own terminal, not through an agent |
-| `Can't find video ID` | URL does not contain a 32-character recording id | copy the URL from the recording page, not from the browser address bar if it was rewritten |
-| `This video does not exist` | id wrong or not shared with the account | check the recording is still online and visible to you |
-| login loop / timeout | SPID flow changed, or slow connection | retry with `-i 2`, which doubles every timeout |
+| `Cookie is not valid` then a password prompt | logged out, no saved password | see *Accounts that sign in with CIE* below |
+| the command hangs after that prompt | stdin is not a TTY: an agent or a pipe swallowed it | it must be run by the user, in their own terminal |
+| `Can't find video ID` | URL has no 32-character recording id | copy the URL from the recording page |
+| `This video does not exist` | wrong id, or not shared with the account | check the recording is online and visible |
+| login loop / timeout | SPID flow changed, or slow connection | retry with `-i 2` |
+
+Never pipeline PoliWebex into another command on first run: `node poliwebex.js … | tail`
+loses the interactive prompt and looks like a hang.
 
 ### Accounts that sign in with CIE
 
@@ -119,16 +160,17 @@ phone, there is no password to fill, so it can never get past login — whatever
 it comes back asking for a password, and the browser ends up on the Webex home page
 instead of the recording.
 
-Do not fight it: skip its login entirely. PoliWebex stores the session in
-`config.json` under `cookie` and reuses it while valid, so a cookie captured from a normal
-browser session is enough.
+Do not fight it: skip its login entirely. PoliWebex stores the session in `config.json`
+under `cookie` and reuses it while valid, so a cookie captured from a normal browser
+session is enough.
 
 1. Log into Webex with CIE in Chrome, then open any recording page.
-2. DevTools → Network → filter `politecnicomilano.webex.com` → any request → Request
-   Headers → copy the whole `Cookie:` value.
-3. `node scripts/poliwebex-cookie.mjs`, paste it, press Ctrl-D. The helper validates it
-   against Webex and writes it into `~/tools/PoliWebex/config.json`; it is never echoed
-   back and never enters the shell history.
+2. DevTools → Network → right-click any request to `politecnicomilano.webex.com` →
+   **Copy as cURL**.
+3. `node scripts/poliwebex-cookie.mjs`, paste it, press Ctrl-D. The helper pulls the
+   cookie out of the pasted command, validates it against Webex, and writes it into
+   `~/tools/PoliWebex/config.json`; it is never echoed back and never enters the shell
+   history.
 4. `node poliwebex.js -v "<url>" -o "<course>/raw/_incoming"` now prints `Cookie is valid`
    and asks for nothing.
 
@@ -136,243 +178,99 @@ Cookies expire — typically after a few hours or a browser restart. When downlo
 failing again, `node scripts/poliwebex-cookie.mjs --check` says so and you repeat step 2.
 Expect to redo this once per study session, not once per lecture.
 
-The `X11 is not installed` message from keytar is unrelated noise on macOS: it means the
+The `X11 is not installed` message from keytar is harmless noise on macOS: it means the
 password cannot be stored in the keychain. With a valid cookie there is no password to
-store, and `-k` silences the warning.
+store.
 
-Two flags matter here: `-k` skips the system keyring when it refuses to store the password
-(macOS may deny access silently), and `-i 2` scales the timeout, which is the fix for a
-login that is merely slow.
+## 3. Bootstrap
 
-Never pipeline PoliWebex into another command on first run: `node poliwebex.js ... | tail`
-loses the interactive prompt and looks like a hang.
-
-Rules:
-
-- **Credentials never enter the repository.** PoliWebex keeps the SPID password in the
-  system keyring; passing `-p`/`-u` on the command line is allowed interactively but the
-  values must not be written into the manifest, a script or a note.
-- **The filename is metadata, not noise.** PoliWebex names files after the video title,
-  and those titles usually describe the content of the lecture. Use them: derive `title`,
-  `topics` and the lesson `type` from the filename before transcribing anything, because
-  it costs nothing and seeds the glossary.
-
-### From filename to manifest entry
-
-After a batch lands in `raw/_incoming`, list it and build the mapping explicitly:
-
-```
-Lesson number 12 - Interpolazione polinomiale e fenomeno di Runge.mp4
-Esercitazione 3 - Esercizi su spline e minimi quadrati.mp4
-```
-
-- `id`: sequence number, `L12` for theory, `E03` for exercise sessions.
-- `type`: `exercise` if the title contains "esercitazione", "esercizi", "laboratorio",
-  "esercitazione guidata"; otherwise `theory`. Ambiguous titles get asked about, since
-  they decide which folder the notes end up in.
-- `title`: the descriptive part of the filename, cleaned of the "Lesson number N -"
-  prefix.
-- `topics`: split the descriptive part on "e", ",", " - " into candidate topics. These
-  are candidates, not final: fix them after the extraction phase, when you know what was
-  actually covered.
-- `date`: take it from the Webex page or the file mtime, never invented.
-- Rename to `raw/L01.mp4` and record both the original filename and the final path, so a
-  re-download can be matched to the right lesson.
-
-Download in batches, then map and rename. Do not rename inside `_incoming` while a
-download is still running.
-- **Validate what came back**:
-  `ffprobe -v error -show_entries format=duration -of csv=p=0 raw/L01.mp4`
-  A missing audio stream or a duration far from the expected lesson length means the
-  download or the recording is broken: stop and report, do not transcribe silence.
-- **Check for a native transcript first.** If the recording page also offers a Webex
-  transcript or captions, use it and skip phase 2 entirely.
-- Downloads are slow and long: run them as a background job, one batch at a time, and
-  keep the session free for other work.
-
-## 3. Audio preparation
-
-Groq's documented preprocessing, run once per lecture. The script does this
-automatically; the commands below are what it executes, useful for manual verification.
-
-```sh
-ffmpeg -y -i raw/L01.mp4 -ar 16000 -ac 1 -map 0:a -c:a flac work/L01.flac
-```
-
-Two deviations from the bare command, both deliberate:
-
-- `-map 0:a:0` instead of `-map 0:a`: the API transcribes only the first track, and
-  mapping every audio stream would interleave outputs and break segmentation.
-- `-f segment -segment_time 600 -segment_format flac -segment_list list.csv` in the same
-  pass: the whole lecture exceeds the upload limit whatever the tier, and the segment list
-  is the only exact record of chunk start times (raw FLAC has no duration header).
-
-Sizes, measured on real Italian speech rather than assumed: 16 kHz mono FLAC runs at
-about 20 KB/s, so **10 minutes ≈ 12 MB** and **90 minutes ≈ 108 MB**. The documented
-ffmpeg command alone is therefore not enough: a normal-length lecture exceeds even the
-100 MB dev-tier limit, and on the 25 MB free tier it exceeds it four times over.
-Segmentation is mandatory, not a convenience.
-
-Secondary reason to keep it: each chunk is an independent request, so a transient
-failure costs one chunk instead of a whole lecture, and the boundary offsets stay exact.
-
-The script enforces the ceiling before uploading (`--max-upload-mb`, default 100, set 25
-on the free tier) and fails with a clear message rather than sending a request that the
-API will reject.
-
-### Silence: cut in it, never remove it
-
-Removing silence is tempting and almost useless here. Measured on a 90-minute lecture,
-speech runs at about 20 KB/s, so trimming a realistic 10% of pauses takes the file from
-108 MB to roughly 97 MB: still at the limit, and chunking already solved that problem
-for good. At $0.04 per audio hour it saves half a cent.
-
-The cost is not worth it: deleting audio shifts every later timestamp, so the transcript
-no longer points at the right moment of the video or the right slide, and the pipeline
-needs a `removed_intervals` map rebuilt and reapplied to every segment. That is a new
-failure mode in the one property everything else depends on.
-
-What is worth doing is using silence to decide **where** to cut. `silencedetect` finds
-the pauses, each nominal boundary moves to the middle of the nearest one (within 30 s),
-and the chunk starts exactly there. Nothing is deleted, so offsets stay absolute and
-exact; what changes is that a chunk no longer begins or ends mid-word, which is where
-Whisper produces its worst output. Verified on a fixture with pauses every 20 s: nominal
-cuts at 60 s and 120 s became 52 s and 108 s, both inside pauses.
-
-Disable with `--no-snap` when the recording has no usable pauses, e.g. continuous music
-or heavy background noise that defeats the detector.
-
-Two cases are worth deleting, and both are explicit rather than automatic:
-
-- **dead zones** longer than ~2 minutes (audio dropout, a break, the room emptying);
-  record the cut as an interval with its reason, and keep the time map;
-- **silence at the very start or end**, which carries no information at all.
-
-Whisper hallucination is the one genuine argument for trimming inside long silences: it
-invents stock phrases in dead air. Prefer detecting those phrases and dropping them at
-extraction time, which is reversible, over destroying the timeline.
-
-## 4. Transcription
-
-### Preflight
-
-Before promising a transcription, check the machine:
+The whole pipeline is local, so setup is just three tools. Check, install, re-check.
 
 ```sh
 node scripts/transcribe.mjs --check
 ```
 
-It reports node, `ffmpeg`, `ffprobe`, the key location and permissions, and whether the
-API accepts the key (a single `GET /models`, no audio). Exit code is nonzero when
-something is missing or rejected, and it prints the setup steps.
+| Missing | Command | Notes |
+|---|---|---|
+| `whispermlx` | `uv tool install whispermlx` | Python package; needs its own environment |
+| `ffmpeg`, `ffprobe` | `brew install ffmpeg` | also used for audio normalisation |
+| PoliWebex | see §2 | ~150 MB of bundled Chromium |
 
-The key is resolved from `--key-file`, then `$GROQ_API_KEY`, then `$GROQ_API_KEY_FILE`,
-then `~/.config/polimi-lectures/groq.key`. **It is never requested in the conversation**:
-the user creates it at console.groq.com/keys and writes it in their own terminal, so the
-secret never enters a transcript, a log or a commit. If a key does get pasted into a
-chat, the only right answer is to rotate it.
-
-### Providers
-
-Two backends behind one interface, chosen with `--provider`:
-
-| | `groq` (default) | `cloudflare` | `whispermlx` |
-|---|---|---|---|
-| Endpoint | `POST {base}/audio/transcriptions`, multipart | `POST {base}/accounts/{id}/ai/run/@cf/openai/whisper-large-v3-turbo` | local CLI process |
-| Body | multipart form | JSON with base64 audio | a file on disk |
-| Response | bare transcript object | `{result, success, errors}` envelope | JSON written into `--output_dir` |
-| Glossary | `prompt` | `initial_prompt` | `--initial_prompt` |
-| Quota | 7200 audio-s per window | 10,000 neurons/day | none |
-
-`whispermlx` is a WhisperX fork on MLX: it writes files instead of printing JSON, so each
-chunk gets a scratch directory, the `<stem>.json` is read back, and its segments are
-offset and merged like any other provider. It is the only option with no quota and no
-upload, at the cost of wall-clock time and a ~1 GB model download.
-
-Cloudflare sends audio as base64 inside JSON, not as a raw body, because a raw body has
-nowhere to put `language` and `initial_prompt` — without them the model guesses the
-language and loses the glossary. The cost is 33% more bytes on the wire: a 12 MB chunk
-becomes about 16 MB, still far under the 100 MB request limit.
-
-It also exposes knobs Groq does not, and the default is set deliberately:
-`condition_on_previous_text: false` fights the repetition loops measured on real audio.
-`vad_filter`, `no_speech_threshold`, `compression_ratio_threshold` and
-`hallucination_silence_threshold` remain available but off — they can drop audio, and
-the timestamps have to stay aligned to the slides.
-
-### Running it
+Without `uv`, use a virtualenv and pass the binary explicitly:
 
 ```sh
-export GROQ_API_KEY="gsk_..."
-node scripts/transcribe.mjs raw/L01.mp4 \
-  --out work/L01 \
-  --language it \
-  --prompt-file work/glossary.txt \
-  --chunk 600
+python3 -m venv ~/.venvs/mlx
+~/.venvs/mlx/bin/pip install whispermlx
+node scripts/transcribe.mjs --check --whispermlx ~/.venvs/mlx/bin/whispermlx
 ```
 
-What it does: normalises and chunks with `ffmpeg`, uploads each chunk to
-`POST /openai/v1/audio/transcriptions` with `response_format=verbose_json` and
-`timestamp_granularities[]=segment`, adds the chunk's exact start offset to every
-segment, and writes:
+Record that path as `transcription.bin` in the manifest once, so every later call reuses it.
+
+The model is downloaded from Hugging Face on first use: about 1 GB for `large-v3-turbo`,
+about 3 GB for `large-v3`. It is cached afterwards, so the download happens once per
+machine.
+
+## 4. Local transcription
+
+```sh
+node scripts/transcribe.mjs raw/L01.mp4 --out work/L01 \
+  --language it --prompt-file work/glossary.txt
+```
+
+What it does: normalises the media to 16 kHz mono FLAC with `ffmpeg`, runs whispermlx once
+over the whole file, and turns the JSON it writes into:
 
 | File | Content |
 |---|---|
 | `work/L01.transcript.md` | header plus `[HH:MM:SS]` blocks of about 45 seconds |
 | `work/L01.srt` | segment-level subtitles for jumping to a moment |
-| `work/L01.segments.json` | machine-readable segments with absolute times |
-| `work/L01.chunks/` | normalised audio and `list.csv`, regenerable, safe to delete |
+| `work/L01.segments.json` | machine-readable segments, with the measured speed |
+| `work/L01.work/` | normalised audio and whispermlx output, regenerable |
+
+One invocation per lecture, deliberately. whispermlx is a WhisperX fork and performs its
+own VAD chunking internally, so splitting the file here would only add offsets to
+reconstruct and boundaries that cut words. There is no upload limit to respect either: this
+is the local engine.
 
 Model choice:
 
-| Model | Cost/hour | WER | Use it when |
-|---|---|---|---|
-| `whisper-large-v3-turbo` | $0.04 | 12% | default: fast and cheap, fine for lecture prose |
-| `whisper-large-v3` | $0.111 | 10.3% | dense derivations, heavy jargon, or if turbo keeps mangling numbers |
+| Model | Download | Use it when |
+|---|---|---|
+| `large-v3-turbo` | ~1 GB | default: much faster, fine for lecture prose |
+| `large-v3` | ~3 GB | dense derivations, heavy jargon, or if turbo keeps mangling numbers |
 
-`prompt` holds 200–500 characters of course-specific terms only: symbol names read
-aloud, acronyms, instructor names, method names. It is the cheapest accuracy win
-available, and it is why `work/glossary.txt` is updated after the first lesson rather
-than guessed in advance.
-
-### Quotas, backoff and hallucination
-
-Groq reports the account's real quota on every response, and the script prints the balance
-after each run: `budget     27 of 7200 audio-seconds used, 7173 left (window resets in 13.5s)`.
-
-Measured on a free-plan account: **7200 audio seconds** and **2000 requests** per window.
-A 90-minute lecture is 5400 audio seconds, so it eats most of one bucket. Plan one lecture
-per refill, and read the printed reset time rather than assuming the window length.
-
-- **429 is not retried blindly.** The response carries `retry-after`; the script waits
-  that long, capped at 120 s, instead of burning the remaining budget on exponential
-  backoff. Exhausted quota will not fix itself in a few seconds.
-- **The 25 MB ceiling is enforced locally** before the upload, so a doomed request never
-  costs a round trip. `--max-upload-mb 100` only on the developer tier.
-
-**Hallucination on silence is real and reproducible.** Two seconds of pure silence,
-transcribed with `temperature: 0`, returned `" Thank you."` — the model completing a
-transcript that was not there. It appears in dead air, at pauses and at file boundaries.
-Two mitigations, in order of preference:
-
-1. drop any segment shorter than ~3 s whose text matches a stock phrase ("Thank you.",
-   "Thanks for watching.", "Sottotitoli a cura di", and their variants) — reversible,
-   cheap, and done at extraction time;
-2. keep cutting *in* silences so the affected audio is small, never remove the silence
-   itself: the timeline has to survive.
-
-Record what was dropped in the extraction JSON, so a missing sentence is traceable to the
-filter rather than to a bad recording.
+`--initial_prompt` holds 200–500 characters of course-specific terms only: symbol names
+read aloud, acronyms, instructor names, method names. It is the cheapest accuracy win
+available, and it is why `work/glossary.txt` is updated after the first lesson rather than
+guessed in advance.
 
 Other rules:
 
-- Verify timestamps are monotonic and end near the media duration: the header records
-  `failed`, and a nonzero value means some chunks were never transcribed.
-- Failed chunks are reported but not cached: re-running retranscribes everything.
-  Acceptable at this cost; do not build a cache until it actually hurts.
+- **Resumability is by file, not by chunk.** An existing transcript is skipped unless
+  `--force` is given, so a batch interrupted at lesson 7 restarts at lesson 7.
+- **Do not run lectures in parallel.** MLX saturates the GPU; two concurrent runs are
+  slower than two sequential ones.
+- **Record the measured speed.** The header carries `speed: Nx realtime`; use the first
+  real measurement to estimate a batch instead of guessing, and tell the user before
+  starting it.
 - Spoken mathematics is unreliable: "kappa", "enne", "pi greco", "a con n" are guesses.
   Everything symbolic is checked against the slides before it may enter the notes.
-- Never run the whole course before checking one lecture end to end.
+- Never run the whole course's notes before checking one lecture end to end.
+
+### Hallucination on silence
+
+Reproducible, not hypothetical: two seconds of pure silence, transcribed with
+`temperature: 0`, came back as `" Thank you."`. Whisper completes a transcript that is not
+there, in dead air, at pauses and at file boundaries, and whispermlx inherits that from the
+model.
+
+Two mitigations, in order of preference:
+
+1. drop any segment shorter than ~3 s whose text matches a stock phrase ("Thank you.",
+   "Thanks for watching.", "Sottotitoli a cura di", and variants) — reversible, cheap, done
+   at extraction time, recorded under `dropped_hallucinations`;
+2. keep the normalised audio (`--keep-audio`) when investigating a suspicious transcript,
+   so a claim about silence can be checked instead of argued about.
 
 ## 5. Slide extraction
 
