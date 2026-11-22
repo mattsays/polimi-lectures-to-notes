@@ -132,6 +132,14 @@ First normalise the links into `links.txt` in the course folder, one URL per lin
 they arrived pasted in the chat or as a file. That file is what PoliWebex consumes and
 what a later re-download will point at.
 
+If PoliWebex prints `Cookie is not valid`, or asks for a password, stop: the account
+probably signs in with CIE, and PoliWebex only automates a username+password form. Never
+ask for a password and never attempt the login yourself. Walk the user through the cookie
+route in `reference/pipeline.md` §2 — they sign in to Webex in their own browser, copy a
+request as cURL, and `scripts/poliwebex-cookie.mjs` stores and validates it. It is their
+session: the cookie must never be pasted into the chat, and this step cannot be
+automated for them.
+
 PoliWebex names files after the video title, and those titles usually describe the
 lecture. Derive `id`, `type` (theory vs exercise session), `title` and candidate
 `topics` from the filename before transcribing: it costs nothing and it seeds both the

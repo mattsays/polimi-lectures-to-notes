@@ -57,6 +57,38 @@ selection rules and the exam-signal taxonomy — not the speech-to-text.
 Nothing in the workflow calls a harness API, an MCP server or a proprietary tool. Any agent
 that can read these files and run a shell command can execute it.
 
+## Quickstart
+
+The shortest path from nothing to one finished lecture.
+
+1. **Install PoliWebex**, which handles the download:
+   `git clone https://github.com/sup3rgiu/PoliWebex ~/tools/PoliWebex && cd ~/tools/PoliWebex && npm install`
+2. **Add a transcription backend**: a Groq key or a Cloudflare token and account id — see
+   *Providers and credentials*.
+3. **Hand over your Webex session**, because PoliWebex cannot log in with CIE — see
+   *Webex session* below.
+4. **Check the setup**: `node scripts/transcribe.mjs --check --provider cloudflare`
+5. **Run one lecture end to end** before trusting it with a whole course.
+
+### Webex session
+
+PoliWebex automates a username+password form, so an account that signs in with CIE on a
+phone never gets through: it keeps asking for a password, and the browser lands on the
+Webex home page instead of the recording. It does reuse a stored cookie, so give it one.
+
+1. Sign in to Webex in Chrome as usual, then open any recording page.
+2. DevTools → Network → right-click any request to `politecnicomilano.webex.com` →
+   **Copy as cURL**.
+3. `node scripts/poliwebex-cookie.mjs` → paste → Ctrl-D.
+
+The helper pulls the cookie out of the pasted command, checks it against Webex, and only
+then writes it into `~/tools/PoliWebex/config.json` (override with `--poliwebex <dir>` or
+`$POLIWEBEX_DIR`). It is never echoed and never enters the shell history. Run
+`--check` when downloads start failing again: cookies expire, typically once per study
+session.
+
+The `X11 is not installed` warning from keytar is harmless on macOS, and `-k` silences it.
+
 ## Install
 
 The contract is simple: a folder containing `SKILL.md`. Where it goes depends on the

@@ -8,7 +8,10 @@
 //
 //   node scripts/poliwebex-cookie.mjs                 # read the cookie from stdin
 //   node scripts/poliwebex-cookie.mjs --check         # validate what is stored
-//   node scripts/poliwebex-cookie.mjs --config <path>
+//   node scripts/poliwebex-cookie.mjs --poliwebex <dir>
+//
+// stdin accepts either a bare Cookie header or a whole curl command pasted from
+// the browser's "Copy as cURL", which is the easier of the two to obtain.
 //
 // The cookie is read from stdin so it never appears in the shell history or in a
 // chat message. It is never printed back.
@@ -17,21 +20,45 @@ import { existsSync, readFileSync, writeFileSync, chmodSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 
-const DEFAULT_CONFIG = path.join(homedir(), 'tools', 'PoliWebex', 'config.json');
+const DEFAULT_DIR = process.env.POLIWEBEX_DIR || path.join(homedir(), 'tools', 'PoliWebex');
 const PROBE = 'https://politecnicomilano.webex.com/webappng/api/v1/pmrs/recent';
 
 function parseArgs(argv) {
-  const opts = { config: DEFAULT_CONFIG, check: false };
+  const opts = { config: null, dir: DEFAULT_DIR, check: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (a === '--config') opts.config = argv[++i] ?? opts.config;
+    if (a === '--config') opts.config = argv[++i];
+    else if (a === '--poliwebex') opts.dir = argv[++i] ?? opts.dir;
     else if (a === '--check') opts.check = true;
     else if (a === '--help' || a === '-h') {
-      console.log('usage: node scripts/poliwebex-cookie.mjs [--config <config.json>] [--check]');
+      console.log([
+        'usage: node scripts/poliwebex-cookie.mjs [options]',
+        '',
+        '  --poliwebex <dir>   PoliWebex checkout, default $POLIWEBEX_DIR or ~/tools/PoliWebex',
+        '  --config <file>     config.json to patch, default <dir>/config.json',
+        '  --check             only validate the cookie already stored',
+        '',
+        'Reads the cookie from stdin: either the Cookie header, or a whole curl command',
+        'copied from the browser with "Copy as cURL".',
+      ].join('\n'));
       process.exit(0);
     } else throw new Error(`unknown option ${a}`);
   }
+  if (!opts.config) opts.config = path.join(opts.dir, 'config.json');
   return opts;
+}
+
+// A pasted curl command is the easiest thing to obtain from DevTools, so accept it
+// and pull the cookie out, rather than making people hunt for the right header.
+function extractCookie(input) {
+  const text = input.replace(/\\\r?\n/g, ' ').trim();
+  if (!/^curl\b/i.test(text)) return text;
+
+  const header = text.match(/(?:-H|--header)\s+(['"])cookie:\s*([^'"]+)\1/i);
+  if (header) return header[2].trim();
+  const cookieJar = text.match(/(?:-b|--cookie)\s+(['"])([^'"]+)\1/i);
+  if (cookieJar) return cookieJar[2].trim();
+  return '';
 }
 
 function readStdin() {
@@ -105,11 +132,22 @@ async function main() {
   }
 
   if (process.stdin.isTTY) {
-    console.error('paste the Cookie header, then press Ctrl-D:');
+    console.error([
+      'Paste one of these, then press Ctrl-D:',
+      '  - the Cookie header value, or',
+      '  - a curl command copied from DevTools with "Copy as cURL"',
+      '',
+    ].join('\n'));
   }
-  const cookie = await readStdin();
+  const raw = await readStdin();
+  if (!raw) {
+    console.error('nothing on stdin');
+    process.exitCode = 1;
+    return;
+  }
+  const cookie = extractCookie(raw);
   if (!cookie) {
-    console.error('no cookie on stdin');
+    console.error('could not find a cookie in that input');
     process.exitCode = 1;
     return;
   }
