@@ -1,0 +1,6 @@
+.DS_Store
+*.key
+.env
+*.chunks/
+work/
+raw/
