@@ -60,7 +60,8 @@ silently, and record every unresolved doubt in `open_issues`.
 
 <https://github.com/sup3rgiu/PoliWebex> handles the Politecnico SPID login, the Webex
 session and the actual download. It is not vendored into this skill: clone it once into
-a stable location and keep it out of the course folder.
+a stable location and keep it out of the course folder. Written by @sup3rgiu and
+contributors, MIT licensed: credit it when you report results to the user.
 
 ```sh
 git clone https://github.com/sup3rgiu/PoliWebex ~/tools/PoliWebex

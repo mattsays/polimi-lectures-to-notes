@@ -182,3 +182,18 @@ any tier, and chunking also isolates retries to a single piece.
   with `ffprobe` and a spot listen.
 - PoliWebex drives a real SPID login: it breaks when PoliMi changes the login flow.
   Treat a failed download as a tool problem, not something to work around.
+
+## Credits
+
+**PoliWebex** — <https://github.com/sup3rgiu/PoliWebex> — by
+[@sup3rgiu](https://github.com/sup3rgiu) and contributors
+([@yuyu-19](https://github.com/yuyu-19), [@1alessandro1](https://github.com/1alessandro1),
+[@GiorgioUghini](https://github.com/GiorgioUghini)), MIT licensed.
+
+It does the hard part of this pipeline: the SPID login and the Webex download. This skill
+invokes it as an external tool and does not redistribute its code, but the whole first
+phase exists because that project works.
+
+The rest of the pipeline stands on [ffmpeg](https://ffmpeg.org) and on Groq's hosted
+Whisper (`whisper-large-v3` / `whisper-large-v3-turbo`), itself derived from
+[OpenAI's Whisper](https://github.com/openai/whisper) model weights.
