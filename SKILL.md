@@ -10,6 +10,11 @@ Turn recorded lectures and instructor material into notes you will actually cons
 Transcription is the means, not the product: the value lies in aligning with the slides,
 in selecting what matters, and in capturing what the instructor says but never writes.
 
+This skill assumes nothing about the agent running it beyond a shell and file access. The
+work happens through `scripts/transcribe.mjs` and ordinary file operations; when a step
+says to run a command, run it. If the harness has no shell, say so and stop rather than
+simulating the result.
+
 ## Non-negotiable rules
 
 1. **No technical content without a source.** Every definition, formula, theorem and
