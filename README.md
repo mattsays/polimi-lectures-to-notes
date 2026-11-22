@@ -102,7 +102,12 @@ it here would create a second copy to keep in sync — the kind of duplication t
 stale the first time the skill changes.
 
 ```
-Read SKILL.md in this folder and follow its "On activation" section.
+Skill: https://github.com/mattsays/polimi-lectures-to-notes
+
+If it is not already cloned on this machine, clone it first
+(`gh repo clone mattsays/polimi-lectures-to-notes` — it is private, so it needs your
+GitHub auth). Then read SKILL.md in the skill folder and follow its "On activation"
+section.
 
 Course: <name>
 Links: <WeBeep page, or the list of Webex links>
@@ -112,16 +117,20 @@ My notes: <attach or paste what you have>
 Italian:
 
 ```
-Leggi SKILL.md in questa cartella e segui la sezione "On activation".
+Skill: https://github.com/mattsays/polimi-lectures-to-notes
+
+Se non è già clonata su questa macchina, clonala prima
+(`gh repo clone mattsays/polimi-lectures-to-notes` — è privata, serve la tua auth GitHub).
+Poi leggi SKILL.md nella cartella della skill e segui la sezione "On activation".
 
 Corso: <nome>
 Link: <pagina WeBeep o lista dei link Webex>
 I miei appunti: <allega o incolla quello che hai>
 ```
 
-If your harness discovers skills on its own, you do not even need this: a plain "turn
-these lecture recordings into notes, here are the links" is enough and the frontmatter
-description does the triggering.
+If your harness discovers skills on its own and the repo is already linked into its skills
+directory, you do not even need this: a plain "turn these lecture recordings into notes,
+here are the links" is enough and the frontmatter description does the triggering.
 
 If the agent reads the file and still drifts — asks for an API key, skips the intake,
 starts writing before calibrating — that is an agent or harness problem. Fix it there,
