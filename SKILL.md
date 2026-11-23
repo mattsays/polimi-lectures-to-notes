@@ -98,6 +98,7 @@ Read only what the current phase needs, not everything up front.
 | `reference/templates.md` | Phase 4: Markdown skeletons for theory and exercise sessions. |
 | `scripts/transcribe.mjs` | Phase 3. Run it; read it only when it fails. |
 | `scripts/poliwebex-cookie.mjs` | Phase 2, only when PoliWebex asks for a password. |
+| `scripts/check-notes.mjs` | Phase 4, before showing any note to the user. |
 
 ## Flow
 
@@ -189,10 +190,13 @@ Now the loop that produces deliverables. For each lesson, in order:
    `reference/extraction.md`. No Markdown in this step.
 2. **Write** the Markdown per `STYLE.md` and `reference/templates.md`. Nothing is added
    that is not in the JSON.
-3. **Checkpoint**: present the file with a three-line summary — what it contains, which
+3. **Check before showing it**: `node scripts/check-notes.mjs <course> --lesson L01`.
+   Errors are yours to fix — a source-less concept, an example without a result, a
+   dangling wikilink. Warnings get mentioned to the user, not silently ignored.
+4. **Checkpoint**: present the file with a three-line summary — what it contains, which
    `to_verify` items remain open, what you think is missing. Ask for confirmation before
    the next lesson.
-4. **Fold corrections back** into `STYLE.md`, not only into that file, so they hold for
+5. **Fold corrections back** into `STYLE.md`, not only into that file, so they hold for
    every later lesson.
 
 Never write lesson five before lesson one has been approved.

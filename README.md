@@ -23,6 +23,7 @@ fixtures, not yet on a full real course.
 | `reference/templates.md` | Phase 4: Markdown skeletons and course-level files. |
 | `scripts/transcribe.mjs` | ffmpeg normalisation, whispermlx invocation, transcript and subtitle output, preflight. |
 | `scripts/align.mjs` | Maps slides to the moments they are discussed, from lexical overlap and verbal cues. |
+| `scripts/check-notes.mjs` | Lints the extraction JSON and the notes against the skill's rules. |
 | `scripts/poliwebex-cookie.mjs` | Stores a Webex session cookie, for accounts that sign in with CIE instead of a password. |
 
 ## How it is designed
@@ -198,6 +199,19 @@ the transcription itself had already succeeded.
 
 Model choice: `large-v3-turbo` (~1 GB) by default, `large-v3` (~3 GB) when the material is
 dense with formulas. Both are downloaded once and cached.
+
+## Checking notes
+
+```sh
+node scripts/check-notes.mjs <course>            # every lesson
+node scripts/check-notes.mjs <course> --lesson L01
+```
+
+It enforces what a person reliably forgets to check: a concept, example or trap with no
+source; an example without a result; a `to_verify` entry that does not say what is
+uncertain; a lesson marked `written` whose files do not exist; missing frontmatter;
+headings deeper than `###`; callouts outside the allowed set; wikilinks that point at
+nothing. Errors fail the run, warnings are worth reading.
 
 ## Time, not quota
 

@@ -143,3 +143,10 @@ Before leaving phase 3, answer these in `open_issues` of the manifest:
 4. No `concepts` entry has `statement: null` without a matching `gaps` entry.
 
 A lesson that fails the check is not ready for phase 4.
+
+The mechanical half of this list is `scripts/check-notes.mjs`: it verifies that every
+concept, example and trap carries a source, that examples state a result, that `to_verify`
+entries name their doubt, that the manifest's claimed status matches the files, and that
+the Markdown respects the frontmatter, heading depth, callout set and wikilinks. Run it
+before declaring a lesson done — the checks that a person reliably skips are exactly the
+ones worth automating.
