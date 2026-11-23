@@ -106,7 +106,7 @@ function hasSoftCue(text) {
 
 function main() {
   const argv = process.argv.slice(2);
-  const opts = { window: 30, margin: 1.35, out: null, segments: null, slides: null };
+  const opts = { window: 30, margin: 1.35, pageOffset: 0, out: null, segments: null, slides: null };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     const next = () => argv[++i];
@@ -115,10 +115,12 @@ function main() {
     else if (a === '--out') opts.out = next();
     else if (a === '--window') opts.window = Number(next());
     else if (a === '--margin') opts.margin = Number(next());
+    else if (a === '--page-offset') opts.pageOffset = Number(next());
     else if (a === '--help' || a === '-h') {
       console.log(`usage: node scripts/align.mjs --segments <segments.json> --slides <slides.txt> --out <alignment.json>
   --window <seconds>   transcript window size, default 30
-  --margin <factor>    how much better a new slide must score to take over, default 1.35`);
+  --margin <factor>    how much better a new slide must score to take over, default 1.35
+  --page-offset <n>    added to spoken slide numbers; 1 when the PDF starts with a cover`);
       return;
     } else throw new Error(`unknown option ${a}`);
   }
@@ -136,6 +138,14 @@ function main() {
   const common = commonTokens(slides);
   for (const slide of slides) for (const t of common) slide.tokens.delete(t);
 
+  // A slide that is only a figure has no tokens to match. It is not "never discussed":
+  // it is invisible to this method and has to be looked at as an image.
+  for (const slide of slides) slide.hasText = slide.tokens.size >= 5;
+  const withoutText = slides.filter((x) => !x.hasText).map((x) => x.index);
+  if (slides.every((x) => !x.hasText)) {
+    throw new Error('no slide has enough text to match: this deck is image-only, render the pages with pdftoppm and read them instead');
+  }
+
   const windows = buildWindows(segments, opts.window).map((w) => ({
     ...w,
     tokens: new Set(tokenise(w.text)),
@@ -146,7 +156,9 @@ function main() {
   let currentScore = 0;
 
   for (const win of windows) {
-    const scores = slides.map((s) => ({ index: s.index, score: jaccard(win.tokens, s.tokens) }));
+    const scores = slides
+      .filter((s) => s.hasText)
+      .map((s) => ({ index: s.index, score: jaccard(win.tokens, s.tokens) }));
     scores.sort((a, b) => b.score - a.score);
     const best = scores[0];
     const cued = cueSlide(win.text, slides.length);
@@ -155,7 +167,9 @@ function main() {
     let anchor;
     let confidence;
     if (cued !== null) {
-      chosen = cued;
+      // "slide 5" refers to the deck's own numbering, which is not always the PDF page:
+      // a cover page shifts everything by one.
+      chosen = Math.min(Math.max(cued + opts.pageOffset, 1), slides.length);
       anchor = 'cue';
       confidence = 'high';
     } else if (current === null) {
@@ -200,16 +214,18 @@ function main() {
   }
 
   const covered = new Set(history.map((h) => h.slide));
-  const never = slides.filter((s) => !covered.has(s.index)).map((s) => s.index);
+  const never = slides.filter((s) => s.hasText && !covered.has(s.index)).map((s) => s.index);
 
   const output = {
     generated: new Date().toISOString(),
     window_seconds: opts.window,
+    page_offset: opts.pageOffset,
     slides_total: slides.length,
     slides_covered: covered.size,
     ignored_common_tokens: common.size,
     alignment: history,
     never_discussed: never,
+    slides_without_text: withoutText,
   };
   if (opts.out) writeFileSync(opts.out, `${JSON.stringify(output, null, 2)}\n`);
 
@@ -219,6 +235,10 @@ function main() {
   const high = history.filter((h) => h.confidence === 'high').length;
   console.log(`anchors    ${high} cue-based, ${history.length - high} from overlap only`);
   if (never.length) console.log(`never      slides ${never.join(', ')} were not discussed`);
+  if (withoutText.length) {
+    console.log(`no text    slides ${withoutText.join(', ')} — nothing to match, render them:`);
+    console.log(`           pdftoppm -f <n> -l <n> -r 110 -png <deck>.pdf work/pages/p`);
+  }
   if (opts.out) console.log(`written    ${opts.out}`);
 }
 

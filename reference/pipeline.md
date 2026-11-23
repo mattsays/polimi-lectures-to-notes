@@ -343,6 +343,31 @@ node scripts/align.mjs --segments work/L01.segments.json \
 **Confidence** is `high` for cue anchors, `medium` for a decisive overlap, `low` otherwise.
 Only `low` entries are worth checking, which is usually a handful per lecture.
 
+**Decks with a cover page.** "Slide 5" refers to the deck's own numbering, and a cover page
+shifts every number by one relative to the PDF. Pass `--page-offset 1` in that case; with
+the wrong offset a cue silently maps to the neighbouring slide, which is worse than no cue
+because it is marked `high` confidence. Check the first page of the deck before trusting
+the numbers.
+
+**Slides without text.** A page that is only a figure has nothing to match. Those are
+reported separately as `slides_without_text`, never as `never_discussed`: "the lecturer
+skipped it" and "this tool cannot see it" are different facts, and only the first is
+useful. Render them and read them:
+
+```sh
+pdftoppm -f <n> -l <n> -r 110 -png assets/L01.pdf work/pages/p
+```
+
+If every page lacks text the script stops and says so, instead of inventing a mapping.
+
+**Tested on** three fixtures, since no real deck was available: five clean slides (mapped
+correctly, one cue anchor); eight slides with a repeated header and footer plus three
+image-only pages (header tokens discarded, the three image pages reported as without text,
+the rest mapped correctly); eight slides with no verbal cues at all (all mapped from
+overlap alone); and a cover-page deck, where the offset flag is what makes the cue land on
+the right page. The realistic failure mode left untested is a deck whose formulas live in
+images while the surrounding prose is thin.
+
 **What it does not do.** It cannot recover a slide the lecturer never discussed (listed in
 `never_discussed`), it cannot order slides inside a window shorter than 30 seconds, and two
 slides with near-identical text will be confused with each other. Those cases need the
